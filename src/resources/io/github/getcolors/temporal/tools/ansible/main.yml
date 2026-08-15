@@ -96,7 +96,8 @@
                 retries: 30
               restart: unless-stopped
             temporal:
-              image: temporalio/auto-setup:<{ temporal-version }>
+              image: temporalio/server:<{ temporal-version }>
+              command: ["autosetup"]
               env_file: stack.env
               environment:
                 DB: postgres12
