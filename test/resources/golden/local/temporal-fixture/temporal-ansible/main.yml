@@ -38,9 +38,16 @@
         set -euo pipefail
         umask 077
         secret=$(openssl rand -hex 32)
-        printf 'POSTGRES_PASSWORD=%s\nPOSTGRES_PWD=%s\n' "$secret" "$secret" > /opt/temporal/stack.env
+        printf 'POSTGRES_PASSWORD=%s\nPOSTGRES_PWD=%s\nSQL_PASSWORD=%s\n' "$secret" "$secret" "$secret" > /opt/temporal/stack.env
       args: {executable: /bin/bash, creates: /opt/temporal/stack.env}
       no_log: true
+    - name: Add schema-tool credential to an existing retained secret file
+      ansible.builtin.shell: |
+        grep -q '^SQL_PASSWORD=' /opt/temporal/stack.env ||
+        awk -F= '/^POSTGRES_PWD=/{print "SQL_PASSWORD=" $2}' /opt/temporal/stack.env >> /opt/temporal/stack.env
+      args: {executable: /bin/bash}
+      no_log: true
+      changed_when: false
     - ansible.builtin.file: {path: /opt/temporal/stack.env, mode: "0600", owner: root, group: root}
     - name: Install reference application source
       ansible.builtin.copy:
@@ -95,9 +102,20 @@
                 timeout: 5s
                 retries: 30
               restart: unless-stopped
+            schema:
+              image: temporalio/admin-tools:1.31.2
+              env_file: stack.env
+              entrypoint: ["/bin/sh", "-ec"]
+              command: |
+                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal setup-schema -v 0.0
+                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
+                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility create || true
+                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility setup-schema -v 0.0
+                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility update-schema -d /etc/temporal/schema/postgresql/v12/visibility/versioned
+              depends_on:
+                postgresql: {condition: service_healthy}
             temporal:
               image: temporalio/server:1.31.2
-              command: ["autosetup"]
               env_file: stack.env
               environment:
                 DB: postgres12
@@ -112,6 +130,7 @@
                 - ./dynamicconfig:/etc/temporal/config/dynamicconfig:ro
               depends_on:
                 postgresql: {condition: service_healthy}
+                schema: {condition: service_completed_successfully}
               healthcheck:
                 test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
                 interval: 10s
