@@ -30,8 +30,9 @@ committed.
 
 ## Operations
 
-Docker Compose under `/opt/temporal` owns `postgresql`, `temporal`,
-`application`, and `caddy`. Use `docker compose ps` and `docker compose logs
+Docker Compose under `/opt/temporal` owns `postgresql`, one-shot `schema`,
+`temporal`, private `admin-tools`, `application`, and `caddy`. Use
+`docker compose ps` and `docker compose logs
 --since 1h SERVICE` over SSH. Containers restart automatically after process,
 Docker, or Droplet restarts. PostgreSQL data is under `/data/postgresql`; daily
 logical dumps are retained for seven days under `/data/temporal/backups`, and

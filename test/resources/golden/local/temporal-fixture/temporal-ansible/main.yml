@@ -134,10 +134,18 @@
                 postgresql: {condition: service_healthy}
                 schema: {condition: service_completed_successfully}
               healthcheck:
-                test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+                test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
                 interval: 10s
                 timeout: 10s
                 retries: 60
+              restart: unless-stopped
+            admin-tools:
+              image: temporalio/admin-tools:1.31.2
+              environment:
+                TEMPORAL_ADDRESS: temporal:7233
+              entrypoint: ["/bin/sh", "-c", "exec sleep infinity"]
+              depends_on:
+                temporal: {condition: service_healthy}
               restart: unless-stopped
             application:
               build: ./application
@@ -168,7 +176,7 @@
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Building' in compose_up.stderr"
     - name: Wait for Temporal frontend
-      ansible.builtin.command: docker compose -f compose.yml exec -T temporal temporal operator cluster health --address temporal:7233
+      ansible.builtin.command: docker compose -f compose.yml exec -T temporal nc -z 127.0.0.1 7233
       args: {chdir: /opt/temporal}
       register: temporal_health
       retries: 60
@@ -177,8 +185,8 @@
       changed_when: false
     - name: Create application namespace once
       ansible.builtin.shell: |
-        docker compose -f compose.yml exec -T temporal temporal operator namespace describe benchmark --address temporal:7233 >/dev/null 2>&1 ||
-        docker compose -f compose.yml exec -T temporal temporal operator namespace create benchmark --retention 7d --address temporal:7233
+        docker compose -f compose.yml exec -T admin-tools temporal operator namespace describe benchmark --address temporal:7233 >/dev/null 2>&1 ||
+        docker compose -f compose.yml exec -T admin-tools temporal operator namespace create benchmark --retention 7d --address temporal:7233
       args: {chdir: /opt/temporal, executable: /bin/bash}
       register: namespace
       changed_when: "'Namespace' in namespace.stdout"
