@@ -175,9 +175,9 @@
       args: {chdir: /opt/temporal}
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Building' in compose_up.stderr"
-    - name: Wait for Temporal frontend
-      ansible.builtin.shell: docker compose -f compose.yml exec -T temporal sh -c 'nc -z -w 2 $(hostname -i) 7233'
-      args: {chdir: /opt/temporal, executable: /bin/bash}
+    - name: Wait for Temporal frontend readiness
+      ansible.builtin.command: docker compose -f compose.yml exec -T admin-tools temporal operator cluster health --address temporal:7233
+      args: {chdir: /opt/temporal}
       register: temporal_health
       retries: 60
       delay: 5
@@ -185,8 +185,8 @@
       changed_when: false
     - name: Create application namespace once
       ansible.builtin.shell: |
-        docker compose -f compose.yml exec -T admin-tools temporal operator namespace describe <{ temporal-namespace }> --address temporal:7233 >/dev/null 2>&1 ||
-        docker compose -f compose.yml exec -T admin-tools temporal operator namespace create <{ temporal-namespace }> --retention <{ temporal-retention-days }>d --address temporal:7233
+        docker compose -f compose.yml exec -T admin-tools temporal operator namespace describe -n <{ temporal-namespace }> --address temporal:7233 >/dev/null 2>&1 ||
+        docker compose -f compose.yml exec -T admin-tools temporal operator namespace create -n <{ temporal-namespace }> --retention <{ temporal-retention-days }>d --address temporal:7233
       args: {chdir: /opt/temporal, executable: /bin/bash}
       register: namespace
       changed_when: "'Namespace' in namespace.stdout"
