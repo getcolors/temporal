@@ -1,14 +1,74 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Temporal Package Skill — getcolors</title>
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-4VKP1WY4QJ"></script>
-<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-4VKP1WY4QJ',{page_title:'Temporal Package Skill — getcolors'});</script>
-<style>body{font:18px/1.6 system-ui;max-width:850px;margin:4rem auto;padding:0 1.2rem;color:#172033}code{background:#eef2f7;padding:.15rem .3rem}h1,h2{line-height:1.2}a{color:#1557b0}</style></head>
-<body><h1>Temporal Package Skill</h1><p>A getcolors Package Skill for a production-oriented single-machine Temporal deployment on DigitalOcean.</p>
-<h2>Architecture</h2><p>One guarded Amsterdam Droplet runs PostgreSQL, all four Temporal Server roles, a TypeScript reference worker/API, and Caddy. The Droplet joins the existing regional default VPC discovered at runtime. Cloudflare publishes only the apex HTTPS API.</p>
-<h2>Pinned software</h2><p>Temporal Server <strong>1.31.2</strong> and TypeScript SDK <strong>1.22.0</strong>, discovered from official release feeds on 2026-08-15.</p>
-<h2>Operate</h2><pre><code>./green build
-./green create --dry-run
-./green create
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Provision a production-oriented single-machine Temporal stack with PostgreSQL, a TypeScript worker and API, HTTPS, backups, and reboot acceptance on DigitalOcean.">
+  <title>Temporal Package Skill — getcolors</title>
+  <style>
+    :root{color-scheme:light;--ink:#1f2328;--muted:#59636e;--line:#d0d7de;--soft:#f6f8fa;--blue:#0969da;--green:#1a7f37;--warn:#9a6700}*{box-sizing:border-box}body{margin:0;color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:920px;margin:auto;padding:64px 28px 100px}h1{font-size:52px;line-height:1.05;margin:0}h2{margin-top:54px;padding-bottom:8px;border-bottom:1px solid var(--line)}h3{margin-top:30px}.lead{font-size:20px;color:var(--muted);max-width:790px}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}pre{padding:18px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--soft)}:not(pre)>code{padding:.12em .35em;border-radius:5px;background:var(--soft)}a{color:var(--blue)}.eyebrow{color:var(--green);font-weight:700;letter-spacing:.08em}.callout{padding:16px 18px;border-left:4px solid var(--green);background:#dafbe1}.warning{border-color:var(--warn);background:#fff8c5}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{padding:18px;border:1px solid var(--line);border-radius:8px}.card h3{margin-top:0}@media(max-width:650px){main{padding-top:38px}.grid{grid-template-columns:1fr}h1{font-size:40px}}
+  </style>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-4VKP1WY4QJ"></script>
+  <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-4VKP1WY4QJ',{page_title:'Temporal Package Skill — getcolors'});</script>
+</head>
+<body><main>
+  <p class="eyebrow">GREEN PACKAGE SKILL · DIGITALOCEAN · TEMPORAL</p>
+  <h1>Temporal Package Skill</h1>
+  <p class="lead">A production-oriented single-machine Temporal deployment with PostgreSQL, all four server roles, a reference TypeScript worker and API, Caddy HTTPS, backups, and an external durability test.</p>
+
+  <div class="callout"><strong>Production server, not a development shortcut.</strong> The stack invokes Temporal Server’s production roles and keeps every Temporal and PostgreSQL port private on the Docker network.</div>
+
+  <h2>Install and preview</h2>
+  <pre><code>npx skills add getcolors/temporal
+cp .agents/skills/package-temporal-green/green ./green
+chmod +x green
+./green build
+./green create --dry-run</code></pre>
+  <p>Build and dry-run are credential-free. They validate desired state, render the deployment, and walk the complete graph without touching DigitalOcean or Cloudflare. Real creation, reboot acceptance, and deletion require explicit authorization.</p>
+
+  <h2>Architecture</h2>
+  <div class="grid">
+    <div class="card"><h3>Infrastructure</h3><p>OpenTofu discovers the configured region’s default VPC, provisions one guarded Ubuntu Droplet and firewall, and creates the Cloudflare apex record. Desired state contains no VPC identifier.</p></div>
+    <div class="card"><h3>Temporal</h3><p>Docker Compose runs PostgreSQL, schema setup, all four Temporal Server roles, private admin tools, the reference application, and Caddy. It never invokes Temporal’s development server.</p></div>
+    <div class="card"><h3>Network</h3><p>Cloud and host firewalls admit restricted SSH plus HTTP and HTTPS. PostgreSQL, Temporal frontend and internode traffic, admin tools, and the worker stay inside the Docker network.</p></div>
+    <div class="card"><h3>Persistence</h3><p>PostgreSQL data lives under <code>/data/postgresql</code>. Containers restart after service, Docker, or Droplet restarts; logical dumps and DigitalOcean backups provide recovery options.</p></div>
+  </div>
+  <p>Temporal Server <strong>1.31.2</strong> and TypeScript SDK <strong>1.22.0</strong> are pinned exactly from the stable releases discovered on 2026-08-15.</p>
+
+  <h2>Reference workflow</h2>
+  <p>The TypeScript API starts workflows under caller-supplied IDs, reports status, and returns deterministic results. Each workflow uses a durable timer, deliberately fails its activity twice, and eventually returns <code>TEMPORAL:&lt;workflow-id&gt;:OK</code> with the successful attempt number. Duplicate IDs are rejected rather than silently creating parallel work.</p>
+  <p>The acceptance command exercises that behavior entirely through the public HTTPS boundary:</p>
+  <pre><code>./green create
+./green acceptance
 ./green acceptance --reboot</code></pre>
-<p>See the <a href="https://github.com/getcolors/temporal">repository manual</a> for configuration, backup, restoration, upgrades, logs, and single-node disaster-recovery limitations.</p></body></html>
+  <p>The reboot variant starts a workflow, reboots the whole Droplet during its durable delay, waits for recovery, and verifies the original execution and retry result. It is the complete persistence test and must run only against an authorized deployment.</p>
+
+  <h2>Desired state and safety</h2>
+  <p><code>colors.yml</code> is flat, kebab-case, non-secret desired state. It selects compute, firewall sources, DNS, backend, Temporal and SDK versions, application host, workflow timing, backup policy, and acceptance behavior. Consult the <a href="skills/package-temporal-green/references/configuration.md">configuration reference</a> before changing it.</p>
+  <ul>
+    <li>Credentials belong only in matching <code>COLORS_PAR_*</code> environment variables in an ignored <code>.envrc.private</code>.</li>
+    <li>Never set <code>COLORS_PAR_PROFILE</code>; the profile determines remote-state identity.</li>
+    <li>Never edit or commit generated <code>.colors/</code>.</li>
+    <li>Keep <code>compute-prevent-destroy: true</code> and treat deletion as a separate authorization.</li>
+  </ul>
+
+  <h2>Operations</h2>
+  <pre><code>ssh SERVER 'cd /opt/temporal &amp;&amp; docker compose ps'
+ssh SERVER 'cd /opt/temporal &amp;&amp; docker compose logs --since 1h temporal'
+ssh SERVER 'cd /opt/temporal &amp;&amp; docker compose logs --since 1h application'</code></pre>
+  <p>Inspect the private stack over SSH rather than publishing admin ports. Re-running <code>create</code> converges the existing deployment and preserves PostgreSQL state.</p>
+
+  <h2>Backups, restoration, and upgrades</h2>
+  <p>Daily logical dumps are retained for seven days under <code>/data/temporal/backups</code>, and the desired Droplet enables DigitalOcean backups. Local dumps are useful for operator recovery but disappear with a lost disk; provider backups reduce that risk without eliminating it.</p>
+  <p>Restore onto a fresh compatible stack with an operator-controlled <code>pg_restore</code> or <code>psql</code> import. Verify schema compatibility, workflow status, and new execution before directing traffic to the replacement. Never import over a running live database.</p>
+  <p>For upgrades, review Temporal Server and schema compatibility guidance, change exact versions, inspect generated and golden diffs, run build and dry-run, take a backup, then converge and run acceptance.</p>
+
+  <div class="callout warning"><strong>One machine is one failure domain.</strong> There is no service redundancy, database replica, cross-region failover, or zero-downtime host maintenance. Workloads requiring high availability need a multi-node Temporal topology and an external highly available database.</div>
+
+  <h2>Development and source</h2>
+  <pre><code>bb test
+bb golden
+./scripts/launcher.sh</code></pre>
+  <p><a href="https://github.com/getcolors/temporal">Source on GitHub</a>. Inspect every golden diff; launcher pins are managed only after a clean pushed package commit.</p>
+</main></body>
+</html>
