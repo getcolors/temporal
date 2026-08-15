@@ -105,13 +105,15 @@
             schema:
               image: temporalio/admin-tools:<{ temporal-version }>
               env_file: stack.env
-              entrypoint: ["/bin/sh", "-ec"]
-              command: |
-                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal setup-schema -v 0.0
-                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
-                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility create || true
-                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility setup-schema -v 0.0
-                temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility update-schema -d /etc/temporal/schema/postgresql/v12/visibility/versioned
+              entrypoint: ["/bin/sh"]
+              command:
+                - -ec
+                - |
+                  temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal setup-schema -v 0.0
+                  temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
+                  temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility create || true
+                  temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility setup-schema -v 0.0
+                  temporal-sql-tool --plugin postgres12 --ep postgresql -p 5432 -u temporal --db temporal_visibility update-schema -d /etc/temporal/schema/postgresql/v12/visibility/versioned
               depends_on:
                 postgresql: {condition: service_healthy}
             temporal:
