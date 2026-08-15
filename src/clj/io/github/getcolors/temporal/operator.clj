@@ -17,8 +17,7 @@ code=$(curl -sS -o \"$body\" -w '%{http_code}' -H 'content-type: application/jso
 code=$(curl -sS -o \"$body\" -w '%{http_code}' -H 'content-type: application/json' -d \"{\\\"workflowId\\\":\\\"$id\\\",\\\"delaySeconds\\\":2}\" \"$api/workflows\")
 [ \"$code\" = 409 ]
 for _ in $(seq 1 90); do
-  curl -fsS \"$api/workflows/$id\" > \"$body\"
-  [ \"$(jq -r .phase \"$body\")\" = completed ] && break
+  if curl -fsS \"$api/workflows/$id\" > \"$body\" && [ \"$(jq -r .phase \"$body\")\" = completed ]; then break; fi
   sleep 2
 done
 jq -e --arg id \"$id\" --argjson attempts \"$((failures + 1))\" '.temporalStatus == \"COMPLETED\" and .result.workflowId == $id and .result.value == (\"TEMPORAL:\" + $id + \":OK\") and .result.attempts == $attempts' \"$body\" >/dev/null

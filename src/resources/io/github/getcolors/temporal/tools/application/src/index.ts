@@ -32,7 +32,14 @@ async function main(): Promise<void> {
   const app = express();
   app.use(express.json({ limit: '16kb' }));
 
-  app.get('/healthz', (_request, response) => response.json({ ok: true, temporal: 'connected' }));
+  app.get('/healthz', async (_request, response) => {
+    try {
+      await client.workflowService.describeNamespace({ namespace });
+      response.json({ ok: true, temporal: 'connected' });
+    } catch (error) {
+      response.status(503).json({ ok: false, temporal: 'unavailable' });
+    }
+  });
 
   app.post('/workflows', async (request, response, next) => {
     try {
