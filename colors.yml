@@ -1,0 +1,33 @@
+profile: temporal-example
+workdir: .colors
+provider-compute: digitalocean
+provider-dns: cloudflare
+provider-backend: local
+compute-prevent-destroy: true
+temporal-version: 1.31.2
+temporal-services: [frontend, history, matching, worker]
+temporal-namespace: benchmark
+temporal-retention-days: 7
+temporal-typescript-sdk-version: 1.22.0
+node-version: 22
+postgres-version: 17
+postgres-data-dir: /data/postgresql
+temporal-data-dir: /data/temporal
+reference-application-host: temporal.example.com
+reference-application-port: 3000
+reference-workflow-delay-seconds: 120
+reference-activity-failures: 2
+reference-activity-maximum-attempts: 5
+reference-duplicate-policy: reject
+digitalocean-name: temporal-example
+digitalocean-region: ams3
+digitalocean-size: c-8
+digitalocean-image: ubuntu-24-04-x64
+digitalocean-backups: true
+digitalocean-ssh-authorized-keys: ~/.ssh/id_ed25519.pub
+digitalocean-ssh-sources: [127.0.0.1/32]
+digitalocean-http-sources: [0.0.0.0/0, "::/0"]
+digitalocean-https-sources: [0.0.0.0/0, "::/0"]
+cloudflare-zone: temporal.example.com
+cloudflare-proxied: false
+tls-provider: letsencrypt

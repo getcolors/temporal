@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Temporal Package Skill — getcolors</title>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4VKP1WY4QJ"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date());gtag('config','G-4VKP1WY4QJ',{page_title:'Temporal Package Skill — getcolors'});</script>
+<style>body{font:18px/1.6 system-ui;max-width:850px;margin:4rem auto;padding:0 1.2rem;color:#172033}code{background:#eef2f7;padding:.15rem .3rem}h1,h2{line-height:1.2}a{color:#1557b0}</style></head>
+<body><h1>Temporal Package Skill</h1><p>A getcolors Package Skill for a production-oriented single-machine Temporal deployment on DigitalOcean.</p>
+<h2>Architecture</h2><p>One guarded Amsterdam Droplet runs PostgreSQL, all four Temporal Server roles, a TypeScript reference worker/API, and Caddy. The Droplet joins the existing regional default VPC discovered at runtime. Cloudflare publishes only the apex HTTPS API.</p>
+<h2>Pinned software</h2><p>Temporal Server <strong>1.31.2</strong> and TypeScript SDK <strong>1.22.0</strong>, discovered from official release feeds on 2026-08-15.</p>
+<h2>Operate</h2><pre><code>./green build
+./green create --dry-run
+./green create
+./green acceptance --reboot</code></pre>
+<p>See the <a href="https://github.com/getcolors/temporal">repository manual</a> for configuration, backup, restoration, upgrades, logs, and single-node disaster-recovery limitations.</p></body></html>

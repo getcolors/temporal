@@ -1,0 +1,14 @@
+{
+  "all" : {
+    "children" : {
+      "temporal" : {
+        "hosts" : {
+          "temporal-fixture" : {
+            "ansible_host" : "192.0.2.10",
+            "ansible_user" : "root"
+          }
+        }
+      }
+    }
+  }
+}

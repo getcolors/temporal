@@ -1,0 +1,10 @@
+---
+- name: Stop Temporal stack before infrastructure deletion
+  hosts: temporal
+  become: true
+  gather_facts: false
+  tasks:
+    - ansible.builtin.command: docker compose -f /opt/temporal/compose.yml down
+      register: compose_down
+      changed_when: "'Removed' in compose_down.stderr or 'Stopped' in compose_down.stderr"
+      failed_when: false

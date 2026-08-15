@@ -1,0 +1,18 @@
+{:paths ["test/clj" "test/resources"]
+ :deps {io.github.getcolors/temporal {:local/root "."}}
+ :tasks
+ {test {:requires ([clojure.test :as t]
+                   [io.github.getcolors.temporal.validate-test]
+                   [io.github.getcolors.temporal.tools-test]
+                   [io.github.getcolors.temporal.workflow-test]
+                   [io.github.getcolors.temporal.operator-test])
+        :task (let [{:keys [fail error]}
+                    (t/run-tests 'io.github.getcolors.temporal.validate-test
+                                 'io.github.getcolors.temporal.tools-test
+                                 'io.github.getcolors.temporal.workflow-test
+                                 'io.github.getcolors.temporal.operator-test)]
+                (System/exit (if (pos? (+ fail error)) 1 0)))}
+  golden {:task (shell "./scripts/golden.sh")}
+  golden:accept {:task (shell "./scripts/golden.sh" "--accept")}
+  pin {:task (load-file "tasks/pin.clj")}
+  temporal {:task (shell "./green" "build")}}}

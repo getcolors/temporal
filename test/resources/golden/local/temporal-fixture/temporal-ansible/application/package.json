@@ -1,0 +1,19 @@
+{
+  "name": "temporal-reference-application",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {"build": "tsc", "start": "node dist/index.js"},
+  "dependencies": {
+    "@temporalio/activity": "1.22.0",
+    "@temporalio/client": "1.22.0",
+    "@temporalio/common": "1.22.0",
+    "@temporalio/worker": "1.22.0",
+    "@temporalio/workflow": "1.22.0",
+    "express": "5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "22.17.1",
+    "typescript": "5.9.2"
+  }
+}

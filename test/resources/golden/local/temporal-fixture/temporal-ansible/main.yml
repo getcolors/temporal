@@ -1,0 +1,187 @@
+---
+- name: Install production Temporal stack and reference application
+  hosts: temporal
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.wait_for_connection: {connect_timeout: 10, delay: 5, sleep: 5, timeout: 600}
+    - ansible.builtin.setup:
+  tasks:
+    - name: Install host packages
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2, curl, jq, openssl, ufw]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - ansible.builtin.systemd_service: {name: docker, enabled: true, state: started}
+    - name: Configure host firewall
+      ansible.builtin.shell: |
+        set -e
+        ufw --force reset
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow from 127.0.0.1/32 to any port 22 proto tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw --force enable
+      args: {executable: /bin/bash}
+      changed_when: true
+    - ansible.builtin.file: {path: /opt/temporal, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: /opt/temporal/application/src, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: /opt/temporal/dynamicconfig, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: "/data/postgresql", state: directory, mode: "0700"}
+    - ansible.builtin.file: {path: "/data/temporal/backups", state: directory, mode: "0700"}
+    - ansible.builtin.file: {path: /var/lib/temporal-caddy/data, state: directory, mode: "0755"}
+    - ansible.builtin.file: {path: /var/lib/temporal-caddy/config, state: directory, mode: "0755"}
+    - name: Generate retained database secret
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        secret=$(openssl rand -hex 32)
+        printf 'POSTGRES_PASSWORD=%s\nPOSTGRES_PWD=%s\n' "$secret" "$secret" > /opt/temporal/stack.env
+      args: {executable: /bin/bash, creates: /opt/temporal/stack.env}
+      no_log: true
+    - ansible.builtin.file: {path: /opt/temporal/stack.env, mode: "0600", owner: root, group: root}
+    - name: Install reference application source
+      ansible.builtin.copy:
+        src: application/
+        dest: /opt/temporal/application/
+        mode: preserve
+      notify: Rebuild stack
+    - name: Configure Caddy
+      ansible.builtin.copy:
+        dest: /opt/temporal/Caddyfile
+        mode: "0644"
+        content: |
+          example.com {
+            encode zstd gzip
+            header {
+              Strict-Transport-Security "max-age=31536000; includeSubDomains"
+              X-Content-Type-Options "nosniff"
+              X-Frame-Options "DENY"
+              Referrer-Policy "no-referrer"
+            }
+            reverse_proxy application:3000
+          }
+      notify: Restart Caddy
+    - name: Configure production dynamic settings
+      ansible.builtin.copy:
+        dest: /opt/temporal/dynamicconfig/production.yaml
+        mode: "0644"
+        content: |
+          # Deliberately explicit and production-named; this deployment does not
+          # invoke Temporal's development server or use its development profile.
+          system.forceSearchAttributesCacheRefreshOnRead:
+            - value: true
+              constraints: {}
+      notify: Rebuild stack
+    - name: Configure production Temporal stack
+      ansible.builtin.copy:
+        dest: /opt/temporal/compose.yml
+        mode: "0644"
+        content: |
+          services:
+            postgresql:
+              image: postgres:17
+              env_file: stack.env
+              environment:
+                POSTGRES_USER: temporal
+                POSTGRES_DB: temporal
+              volumes:
+                - /data/postgresql:/var/lib/postgresql/data
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U temporal"]
+                interval: 5s
+                timeout: 5s
+                retries: 30
+              restart: unless-stopped
+            temporal:
+              image: temporalio/auto-setup:1.31.2
+              env_file: stack.env
+              environment:
+                DB: postgres12
+                DB_PORT: 5432
+                POSTGRES_USER: temporal
+                POSTGRES_SEEDS: postgresql
+                DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/production.yaml
+                TEMPORAL_ADDRESS: temporal:7233
+                TEMPORAL_CLI_ADDRESS: temporal:7233
+                SERVICES: "frontend,history,matching,worker"
+              volumes:
+                - ./dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+              depends_on:
+                postgresql: {condition: service_healthy}
+              healthcheck:
+                test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+                interval: 10s
+                timeout: 10s
+                retries: 60
+              restart: unless-stopped
+            application:
+              build: ./application
+              environment:
+                TEMPORAL_ADDRESS: temporal:7233
+                TEMPORAL_NAMESPACE: benchmark
+                TEMPORAL_TASK_QUEUE: reference
+                DEFAULT_DELAY_SECONDS: "120"
+                ACTIVITY_FAILURES: "2"
+                ACTIVITY_MAXIMUM_ATTEMPTS: "5"
+                PORT: "3000"
+              depends_on:
+                temporal: {condition: service_healthy}
+              restart: unless-stopped
+            caddy:
+              image: caddy:2.10.2
+              ports: ["80:80", "443:443", "443:443/udp"]
+              volumes:
+                - ./Caddyfile:/etc/caddy/Caddyfile:ro
+                - /var/lib/temporal-caddy/data:/data
+                - /var/lib/temporal-caddy/config:/config
+              depends_on: [application]
+              restart: unless-stopped
+      notify: Rebuild stack
+    - name: Start stack
+      ansible.builtin.command: docker compose --env-file stack.env -f compose.yml up -d --build
+      args: {chdir: /opt/temporal}
+      register: compose_up
+      changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Building' in compose_up.stderr"
+    - name: Wait for Temporal frontend
+      ansible.builtin.command: docker compose -f compose.yml exec -T temporal temporal operator cluster health --address temporal:7233
+      args: {chdir: /opt/temporal}
+      register: temporal_health
+      retries: 60
+      delay: 5
+      until: temporal_health.rc == 0
+      changed_when: false
+    - name: Create application namespace once
+      ansible.builtin.shell: |
+        docker compose -f compose.yml exec -T temporal temporal operator namespace describe benchmark --address temporal:7233 >/dev/null 2>&1 ||
+        docker compose -f compose.yml exec -T temporal temporal operator namespace create benchmark --retention 7d --address temporal:7233
+      args: {chdir: /opt/temporal, executable: /bin/bash}
+      register: namespace
+      changed_when: "'Namespace' in namespace.stdout"
+    - name: Install local PostgreSQL backup script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/temporal-backup
+        mode: "0700"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd /opt/temporal
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          docker compose -f compose.yml exec -T postgresql pg_dumpall -U temporal | gzip > /data/temporal/backups/postgresql-$stamp.sql.gz
+          find /data/temporal/backups -type f -name 'postgresql-*.sql.gz' -mtime +7 -delete
+    - name: Schedule daily local logical backup
+      ansible.builtin.cron:
+        name: Temporal PostgreSQL backup
+        minute: "17"
+        hour: "3"
+        user: root
+        job: /usr/local/sbin/temporal-backup
+  handlers:
+    - name: Rebuild stack
+      ansible.builtin.command: docker compose --env-file stack.env -f compose.yml up -d --build
+      args: {chdir: /opt/temporal}
+    - name: Restart Caddy
+      ansible.builtin.command: docker compose -f compose.yml restart caddy
+      args: {chdir: /opt/temporal}
