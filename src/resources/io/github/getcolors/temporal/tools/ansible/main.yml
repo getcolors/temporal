@@ -134,7 +134,7 @@
                 postgresql: {condition: service_healthy}
                 schema: {condition: service_completed_successfully}
               healthcheck:
-                test: ["CMD", "nc", "-z", "127.0.0.1", "7233"]
+                test: ["CMD-SHELL", "nc -z -w 2 $(hostname -i) 7233"]
                 interval: 10s
                 timeout: 10s
                 retries: 60
@@ -176,8 +176,8 @@
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Building' in compose_up.stderr"
     - name: Wait for Temporal frontend
-      ansible.builtin.command: docker compose -f compose.yml exec -T temporal nc -z 127.0.0.1 7233
-      args: {chdir: /opt/temporal}
+      ansible.builtin.shell: docker compose -f compose.yml exec -T temporal sh -c 'nc -z -w 2 $(hostname -i) 7233'
+      args: {chdir: /opt/temporal, executable: /bin/bash}
       register: temporal_health
       retries: 60
       delay: 5
