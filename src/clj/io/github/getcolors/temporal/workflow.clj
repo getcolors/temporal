@@ -13,14 +13,34 @@
                :provider-backend "local" :compute-prevent-destroy true
                :workdir ".colors"})
 
-(defn state-output [opts dir]
-  (try (some-> (tofu/outputs dir (tools/backend-credential-env opts))
-               :params walk/keywordize-keys)
-       (catch Exception _ nil)))
+(defn state-output
+  "Compute params recorded in the infrastructure state; nil when the state
+  holds none. An unreadable backend throws — the delete path treats that as
+  fatal rather than falling back to the documentation address."
+  [opts dir]
+  (some-> (tofu/outputs dir (tools/backend-credential-env opts))
+          :params walk/keywordize-keys))
 
-(defn adopt-existing-state [opts]
-  (if-let [infra (state-output opts (tools/tool-dir opts tools/infrastructure-tool))]
-    (merge opts infra) opts))
+(defn adopt-state
+  "A real delete runs the ansible cleanup before the infrastructure step, so
+  the instance address must come out of the existing state here. An explicit
+  :ip (COLORS_PAR_IP) skips the read; a readable state without compute params
+  leaves :ip unset and the cleanup step skips itself; an unreadable backend
+  fails loudly — swallowing it is how a live teardown ended up converging
+  against 192.0.2.10."
+  [opts]
+  (if (:ip opts)
+    (assoc opts :green/exit 0)
+    (try (merge opts
+                (state-output opts (tools/tool-dir opts tools/infrastructure-tool))
+                {:green/exit 0})
+         (catch Exception e
+           (assoc opts :green/exit 1
+                  :green/err (str "could not read the infrastructure state for "
+                                  "the delete cleanup: " (ex-message e) "\n"
+                                  "fix the backend credentials, or supply "
+                                  (green-cli/par-name :ip)
+                                  " to address the instance directly"))))))
 
 (defn start-step
   ([opts] (start-step opts (System/getenv)))
@@ -40,7 +60,7 @@
           :after-validate
           (fn [opts _ {:keys [event real?]}]
             (if (and real? (= :delete event))
-              (assoc (adopt-existing-state opts) :green/exit 0)
+              (adopt-state opts)
               (assoc opts :green/exit 0)))} env)))
 
 (defn wire-fn [step run-opts]
