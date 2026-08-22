@@ -50,7 +50,7 @@
 ;; cannot resolve its own library says so rather than inventing a SHA or
 ;; silently falling back to whatever is lying around. `bb pin` refuses to stamp
 ;; a dirty or unpushed HEAD for the same reason.
-(def ^:private temporal-sha "10b5eaeec8f71ae20ff7001415a318fda55647f0")
+(def ^:private temporal-sha "797646b9fd23b25d7258ffe64cedda71ab47d562")
 
 (def ^:private temporal-git-url "https://github.com/getcolors/temporal.git")
 (def ^:private green-git-url "https://github.com/getcolors/green.git")
