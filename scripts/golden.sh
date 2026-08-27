@@ -4,7 +4,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fixture="$tmp/colors.yml"
 sed "s#WORKDIR#$tmp/work#" "$root/test/fixtures/colors.yml" > "$fixture"
-TEMPORAL_LIB_ROOT="$root" "$root/green" build -f "$fixture" >/dev/null
+(cd "$root/green" && TEMPORAL_LIB_ROOT="$root" ./green build -f "$fixture" >/dev/null)
 actual="$tmp/work/temporal-fixture"
 golden="$root/test/resources/golden/local/temporal-fixture"
 if grep -rEq 'BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY|github_pat_|ghp_|gho_|ghu_|ghs_|ghr_' "$actual"; then

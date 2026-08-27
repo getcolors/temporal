@@ -1,10 +1,10 @@
 # temporal
 
-A Green Package Skill for a production-oriented, single-machine Temporal
-deployment on DigitalOcean. It discovers the configured Amsterdam region's
-existing default VPC, provisions one guarded Droplet and firewall, creates apex
-Cloudflare DNS, and converges PostgreSQL, all four Temporal Server roles, a
-TypeScript worker/API, and Caddy.
+A tri-colour Package Skill (green, red, blue) for a production-oriented,
+single-machine Temporal deployment on DigitalOcean. It discovers the configured
+Amsterdam region's existing default VPC, provisions one guarded Droplet and
+firewall, creates apex Cloudflare DNS, and converges PostgreSQL, all four
+Temporal Server roles, a TypeScript worker/API, and Caddy.
 
 Temporal Server is pinned to 1.31.2, the latest stable release discovered from
 the [official release feed](https://github.com/temporalio/temporal/releases/tag/v1.31.2)
@@ -13,8 +13,12 @@ It starts caller-ID workflows, uses a durable timer, intentionally retries an
 activity twice, rejects duplicate IDs, and exposes status and deterministic
 results.
 
+The same package ships in three implementations of one behaviour: `green`
+(Clojure/Babashka, canonical), `red` (TypeScript/Bun), and `blue` (Python/uv).
+Pick one launcher; they render byte-identical artifacts.
+
 ```sh
-npx skills add getcolors/temporal
+npx skills add getcolors/temporal          # green; -green/-red/-blue selects a colour
 cp .agents/skills/package-temporal-green/green ./green
 ./green build
 ./green create --dry-run
@@ -54,10 +58,15 @@ external highly available database.
 ## Development
 
 ```sh
-bb test
-bb golden
+cd green && bb test && bb golden
+cd red && bun test && bun run typecheck
+cd blue && uv run pytest
+./scripts/parity.sh
 ./scripts/launcher.sh
 ```
 
-Inspect every golden diff before accepting it. Pins are managed by `bb pin`
-after a clean pushed commit; never hand-edit a SHA.
+Green is canonical; a behavioural change lands in all three colours in the same
+commit and passes `scripts/parity.sh`, which diffs every colour's rendered tree
+and template tree byte for byte. Inspect every golden diff before accepting it.
+Pins are managed by `bb pin` (in `green/`) after a clean pushed commit; never
+hand-edit a SHA.

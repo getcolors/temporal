@@ -12,7 +12,6 @@
                                  'io.github.getcolors.temporal.workflow-test
                                  'io.github.getcolors.temporal.operator-test)]
                 (System/exit (if (pos? (+ fail error)) 1 0)))}
-  golden {:task (shell "./scripts/golden.sh")}
-  golden:accept {:task (shell "./scripts/golden.sh" "--accept")}
-  pin {:task (load-file "tasks/pin.clj")}
-  temporal {:task (shell "./green" "build")}}}
+  golden {:task (shell "../scripts/golden.sh")}
+  golden:accept {:task (shell "../scripts/golden.sh" "--accept")}
+  pin {:task (load-file "tasks/pin.clj")}}}

@@ -11,8 +11,8 @@
 ;; cloud resources, and overriding it from the environment can only point temporal
 ;; at another project's state.
 ;;
-;; This file is both the skill payload and the repository entry point — ./green
-;; in the project root is a symlink to it. It deliberately holds no logic of its
+;; This file is both the skill payload and the repository entry point — green/green
+;; in the repository is a symlink to it. It deliberately holds no logic of its
 ;; own: validation, the graph and the steps all live in the `temporal` library,
 ;; where the test suite reaches them. A copied payload is the one place in this
 ;; project where code cannot be tested, so nothing that can live elsewhere
@@ -33,10 +33,10 @@
 ;;
 ;; Nothing in this stack is published to Clojars, so a standalone copy of this
 ;; launcher resolves `temporal` as an immutable git dependency and lets tools.deps
-;; pull `green` transitively from temporal's own deps.edn. When the classpath
-;; already provides temporal — running inside the project, where bb.edn supplies a
-;; local root — bootstrap is skipped. TEMPORAL_LIB_ROOT, GREEN_LIB_ROOT, and
-;; ONCE_LIB_ROOT override immutable dependencies with working trees.
+;; pull `green` and `once` transitively from temporal's own deps.edn. When the
+;; classpath already provides temporal — running inside the project, where bb.edn
+;; supplies a local root — bootstrap is skipped. TEMPORAL_LIB_ROOT, GREEN_LIB_ROOT,
+;; and ONCE_LIB_ROOT override immutable dependencies with working trees.
 
 (def ^:private launcher-contract
   "Minimum io.github.getcolors.temporal contract this launcher requires. Guarded at
@@ -50,7 +50,7 @@
 ;; cannot resolve its own library says so rather than inventing a SHA or
 ;; silently falling back to whatever is lying around. `bb pin` refuses to stamp
 ;; a dirty or unpushed HEAD for the same reason.
-(def ^:private temporal-sha "797646b9fd23b25d7258ffe64cedda71ab47d562")
+(def ^:private temporal-sha nil)
 
 (def ^:private temporal-git-url "https://github.com/getcolors/temporal.git")
 (def ^:private green-git-url "https://github.com/getcolors/green.git")
@@ -69,7 +69,7 @@
 
 (def ^:private bootstrap-error
   (when (and (System/getProperty "babashka.version") (not resolved?))
-    (let [temporal (lib-coord "TEMPORAL_LIB_ROOT" temporal-git-url temporal-sha nil)
+    (let [temporal (lib-coord "TEMPORAL_LIB_ROOT" temporal-git-url temporal-sha "green")
           green (lib-coord "GREEN_LIB_ROOT" green-git-url nil nil)
           once (lib-coord "ONCE_LIB_ROOT" once-git-url nil "green")]
       (if-not temporal
