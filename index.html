@@ -13,7 +13,7 @@
 <script src="https://rybbit.getcolors.ai/api/script.js" data-site-id="9fb9c41a6d49" defer></script>
 </head>
 <body><main>
-  <p class="eyebrow">GREEN PACKAGE SKILL · DIGITALOCEAN · TEMPORAL</p>
+  <p class="eyebrow">GREEN · RED · BLUE PACKAGE SKILL · DIGITALOCEAN · TEMPORAL</p>
   <h1>Temporal Package Skill</h1>
   <p class="lead">A production-oriented single-machine Temporal deployment with PostgreSQL, all four server roles, a reference TypeScript worker and API, Caddy HTTPS, backups, and an external durability test.</p>
 
@@ -25,6 +25,7 @@ cp .agents/skills/package-temporal-green/green ./green
 chmod +x green
 ./green build
 ./green create --dry-run</code></pre>
+<p>Equivalent Red and Blue skills ship <code>red</code> and <code>blue</code> launchers.</p>
   <p>Build and dry-run are credential-free. They validate desired state, render the deployment, and walk the complete graph without touching DigitalOcean or Cloudflare. Real creation, reboot acceptance, and deletion require explicit authorization.</p>
 
   <h2>Architecture</h2>
