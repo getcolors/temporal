@@ -4,7 +4,7 @@
 # dependencies = ["package-temporal-blue", "blue", "package-once-blue"]
 #
 # [tool.uv.sources]
-# package-temporal-blue = { git = "https://github.com/getcolors/temporal.git", rev = "6aa6af5225665187f977260817a332f1fd1a69b8", subdirectory = "blue" }
+# package-temporal-blue = { git = "https://github.com/getcolors/temporal.git", rev = "d95902f808187c59dcfe879c03d3957c7a32bc69", subdirectory = "blue" }
 # blue = { git = "https://github.com/getcolors/blue.git", rev = "290f313ead5ca162875c33a049c880da017eae09" }
 # package-once-blue = { git = "https://github.com/getcolors/once.git", subdirectory = "blue", rev = "38e3cd66674a32fb96605e1b17ae6791086ad5c1" }
 #
