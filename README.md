@@ -1,10 +1,15 @@
 # temporal
 
 A tri-colour Package Skill (green, red, blue) for a production-oriented,
-single-machine Temporal deployment on DigitalOcean. It discovers the configured
-Amsterdam region's existing default VPC, provisions one guarded Droplet and
-firewall, creates apex Cloudflare DNS, and converges PostgreSQL, all four
-Temporal Server roles, a TypeScript worker/API, and Caddy.
+single-machine Temporal deployment on DigitalOcean, the one compute provider
+it advertises. It discovers the configured region's existing default VPC,
+provisions one guarded Droplet and the provider firewall in front of it,
+generates and owns the machine's SSH keypair (`~/.ssh/<profile>`) and a
+`Host <profile>` block in `~/.ssh/config`, creates apex Cloudflare DNS, and
+converges PostgreSQL, all four Temporal Server roles, a TypeScript worker/API,
+and Caddy. The provider firewall is the only firewall: it admits SSH from
+`digitalocean-ssh-sources` and HTTP/HTTPS from `digitalocean-http-sources`
+and nothing else, and the converge play installs no `ufw`.
 
 Temporal Server is pinned to 1.31.2, the latest stable release discovered from
 the [official release feed](https://github.com/temporalio/temporal/releases/tag/v1.31.2)
@@ -37,7 +42,8 @@ committed.
 Docker Compose under `/opt/temporal` owns `postgresql`, one-shot `schema`,
 `temporal`, private `admin-tools`, `application`, and `caddy`. Use
 `docker compose ps` and `docker compose logs
---since 1h SERVICE` over SSH. Containers restart automatically after process,
+--since 1h SERVICE` over SSH — `ssh <profile>` works, because a real create
+writes the managed `~/.ssh/config` block. Containers restart automatically after process,
 Docker, or Droplet restarts. PostgreSQL data is under `/data/postgresql`; daily
 logical dumps are retained for seven days under `/data/temporal/backups`, and
 the desired Droplet enables DigitalOcean backups.
@@ -66,7 +72,8 @@ cd blue && uv run pytest
 ```
 
 Green is canonical; a behavioural change lands in all three colours in the same
-commit and passes `scripts/parity.sh`, which diffs every colour's rendered tree
-and template tree byte for byte. Inspect every golden diff before accepting it.
-Pins are managed by `bb pin` (in `green/`) after a clean pushed commit; never
-hand-edit a SHA.
+commit and passes `scripts/parity.sh`, which renders both fixtures — opt-out
+and keygen mode of the machine keypair — through every colour and diffs the
+rendered trees and the template trees byte for byte. Inspect every golden diff
+before accepting it. Pins are managed by `bb pin` (in `green/`) after a clean
+pushed commit; never hand-edit a SHA.

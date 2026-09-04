@@ -9,23 +9,11 @@
   tasks:
     - name: Install host packages
       ansible.builtin.apt:
-        name: [docker.io, docker-compose-v2, curl, jq, openssl, ufw]
+        name: [docker.io, docker-compose-v2, curl, jq, openssl]
         state: present
         update_cache: true
         cache_valid_time: 3600
     - ansible.builtin.systemd_service: {name: docker, enabled: true, state: started}
-    - name: Configure host firewall
-      ansible.builtin.shell: |
-        set -e
-        ufw --force reset
-        ufw default deny incoming
-        ufw default allow outgoing
-        ufw allow from <{ ssh-source }> to any port 22 proto tcp
-        ufw allow 80/tcp
-        ufw allow 443/tcp
-        ufw --force enable
-      args: {executable: /bin/bash}
-      changed_when: true
     - ansible.builtin.file: {path: /opt/temporal, state: directory, mode: "0755"}
     - ansible.builtin.file: {path: /opt/temporal/application/src, state: directory, mode: "0755"}
     - ansible.builtin.file: {path: /opt/temporal/dynamicconfig, state: directory, mode: "0755"}

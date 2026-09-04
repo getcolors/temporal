@@ -1,71 +1,106 @@
-"""Lifecycle graph and backend advice, the port of
+"""Lifecycle graph, preflight and backend advice, the port of
 io.github.getcolors.temporal.workflow."""
 
 from __future__ import annotations
 
+import os
+
 from blue import dry_run, progress, tofu
 from blue.cli import par_name, read_pars
 from blue.lifecycle import preflight
-from blue.workflow import advice_add, workflow
+from blue.workflow import advice_add, failed, workflow
+from package_once_blue import compute as once_compute
 
-from . import tools, validate
+from . import ssh, ssh_config, tools, validate
 
-DEFAULTS = {"provider-compute": "digitalocean", "provider-dns": "cloudflare",
+DEFAULTS = {"provider-compute": validate.default_compute_provider,
+            "provider-dns": "cloudflare",
             "provider-backend": "local", "compute-prevent-destroy": True,
             "workdir": ".colors"}
 
-LIFECYCLE_EVENTS = ("create", "delete")
+
+async def state_output(opts: dict) -> dict | None:
+    """Compute params recorded in the infrastructure state; None when the
+    state holds none. An unreadable backend raises the SDK's `StepError`,
+    which `once_compute.read_state` turns into `{"error": message}` — create
+    and delete treat the two differently. Kept local, and looked up on this
+    module at call time, so tests can replace it."""
+    outputs = await tofu.outputs(tools.tool_dir(opts, tools.infrastructure_tool),
+                                 tools.backend_credential_env(opts))
+    return (outputs or {}).get("params")
 
 
-async def state_output(opts: dict, dir: str) -> dict | None:
-    """Compute params recorded in the infrastructure state; None when the state
-    holds none. An unreadable backend raises — the delete path treats that as
-    fatal rather than falling back to the documentation address."""
-    outputs = await tofu.outputs(dir, tools.backend_credential_env(opts))
-    params = outputs.get("params")
-    return params if isinstance(params, dict) else None
-
-
-async def adopt_state(opts: dict, read_state=None) -> dict:
+def adopt_state(opts: dict, state: dict) -> dict:
     """A real delete runs the ansible cleanup before the infrastructure step, so
-    the instance address must come out of the existing state here. An explicit
-    `ip` (COLORS_PAR_IP) skips the read; a readable state without compute params
-    leaves `ip` unset and the cleanup step skips itself; an unreadable backend
-    fails loudly — swallowing it is how a live teardown ended up converging
-    against 192.0.2.10."""
-    read_state = read_state or state_output
-    if opts.get("ip"):
-        return {**opts, "blue/exit": 0}
-    try:
-        params = await read_state(opts, tools.tool_dir(opts, tools.infrastructure_tool))
-        return {**opts, **(params or {}), "blue/exit": 0}
-    except Exception as e:  # noqa: BLE001 — the message is the mechanism
-        return {**opts, "blue/exit": 1,
-                "blue/err": ("could not read the infrastructure state for "
-                             f"the delete cleanup: {e}\n"
-                             "fix the backend credentials, or supply "
-                             f"{par_name('ip')} to address the instance directly")}
+    the instance address must come out of the existing state here. The
+    adoption itself is ONCE's (`once_compute.adopt_state`): a readable state
+    without compute params leaves `ip` unset and the cleanup step skips
+    itself; an unreadable backend fails loudly — swallowing it is how a live
+    teardown ended up converging against 192.0.2.10. What this package adds
+    is the address override: an explicit `ip` (COLORS_PAR_IP) never skips the
+    read or the provider guard, it only replaces the cleanup address once the
+    read has succeeded, for a state whose recorded address is stale. ONCE
+    deliberately applies no such override, so no other package gains a way
+    to point a delete's cleanup at an arbitrary host."""
+    adopted = once_compute.adopt_state(opts, "delete", state)
+    if not failed(adopted) and opts.get("ip"):
+        return {**adopted, "ip": opts["ip"]}
+    return adopted
 
 
-async def start_step(opts: dict, env: dict | None = None, read_state=None) -> dict:
-    async def after_validate(current, _environment, context):
-        if context["real"] and context["event"] == "delete":
-            return await adopt_state(current, read_state)
-        return {**current, "blue/exit": 0}
+async def start_step(original: dict, env: dict | None = None) -> dict:
+    # The state is read once, up front, on the same defaulted and overlaid
+    # opts the validators see — the overlay is what carries the backend
+    # credentials — and only for the two events that touch a provider. The
+    # validator and the after-validate share the one read.
+    environment = dict(os.environ if env is None else env)
+    overlaid = read_pars({**DEFAULTS, **original}, environment)
+    context = {"event": overlaid.get("blue/event"), "real": not overlaid.get("blue/dry-run")}
+    state = (await once_compute.read_state(overlaid, state_output)
+             if once_compute.lifecycle_event(context) else {})
+
+    # The machine key's create matrix and the provider preflight run before
+    # any template is rendered: an unowned key on disk or at the provider
+    # stops the run while stopping is still free. Delete fills the same
+    # template values — a destroy renders before it destroys — and adopts the
+    # recorded address, but checks no key, because its key cleanup runs after
+    # the compute destroy.
+    async def after(opts, _env, ctx):
+        real, event = ctx["real"], ctx["event"]
+        if real and event == "delete":
+            return adopt_state(opts, state)
+        if real and event == "create":
+            async def recorded(_opts):
+                return state.get("params")
+            opts = await ssh.ensure_key(opts, recorded)
+            if failed(opts):
+                return opts
+            opts = ssh.preflight(ssh.with_machine_key(opts))
+            if failed(opts):
+                return opts
+            opts = ssh_config.preflight(opts)
+            if failed(opts):
+                return opts
+            return {**opts, "blue/exit": 0}
+        return {**ssh.with_machine_key(opts), "blue/exit": 0}
 
     return await preflight(
-        opts, defaults=DEFAULTS, overlay=read_pars, env=env,
+        original, defaults=DEFAULTS, overlay=read_pars, env=environment,
         validators=[
             lambda _o, e, _c: validate.env_errors(e),
             lambda o, _e, _c: validate.state_errors(o),
-            lambda o, _e, c: (validate.secret_errors(o)
-                              if c["real"] and c["event"] in LIFECYCLE_EVENTS else []),
+            # Standard §4 before the credentials: a recorded provider that
+            # differs from the selected one reports the actionable error, not
+            # a missing token for the provider that was just selected.
+            lambda o, _e, c: (once_compute.provider_validator(
+                validate.spec, o, state.get("params"), lambda: validate.secret_errors(o))
+                if once_compute.lifecycle_event(c) else []),
             lambda o, _e, c: ([f"compute destruction is protected; set "
                                f"{par_name('compute-prevent-destroy')}=false to delete"]
                               if c["real"] and c["event"] == "delete"
                               and o.get("compute-prevent-destroy") else []),
         ],
-        after_validate=after_validate)
+        after_validate=after)
 
 
 def wire_fn(step: str, run_opts: dict):
@@ -73,12 +108,25 @@ def wire_fn(step: str, run_opts: dict):
         return {
             "temporal/start": (start_step, "temporal/ansible"),
             "temporal/ansible": (tools.ansible_step, "temporal/dns"),
-            "temporal/dns": (tools.dns_step, "temporal/infrastructure"),
-            "temporal/infrastructure": (tools.infrastructure_step,),
+            # The `~/.ssh/config` block goes before the destroy, the opposite
+            # of the keypair below. A block that outlives its host is stale but
+            # harmless; a key that predeceases its host locks the operator out
+            # of a machine that still exists. Both orders are deliberate; see
+            # standards/ssh-config.md.
+            "temporal/dns": (tools.dns_step, "temporal/ssh-config"),
+            "temporal/ssh-config": (tools.ansible_local_step, "temporal/infrastructure"),
+            # The keypair goes strictly after the compute destroy: a key that
+            # predeceases its host locks the operator out of a machine that
+            # still exists (SSH Keypair Standard §3.3).
+            "temporal/infrastructure": (tools.infrastructure_step, "temporal/ssh-cleanup"),
+            "temporal/ssh-cleanup": (ssh.cleanup_step,),
         }.get(step)
     return {
         "temporal/start": (start_step, "temporal/infrastructure"),
-        "temporal/infrastructure": (tools.infrastructure_step, "temporal/dns"),
+        # After compute, which is where the address first exists, and before
+        # the stage that converges the machine.
+        "temporal/infrastructure": (tools.infrastructure_step, "temporal/ssh-config"),
+        "temporal/ssh-config": (tools.ansible_local_step, "temporal/dns"),
         "temporal/dns": (tools.dns_step, "temporal/ansible"),
         "temporal/ansible": (tools.ansible_step, "temporal/acceptance"),
         "temporal/acceptance": (tools.acceptance_step,),
@@ -91,8 +139,8 @@ def backend_advice(tool: str):
         key=lambda o, tool=tool: f"{o.get('profile')}/{tool}.tfstate")
 
 
-side_effecting = ["temporal/infrastructure", "temporal/dns",
-                  "temporal/ansible", "temporal/acceptance"]
+side_effecting = ["temporal/infrastructure", "temporal/dns", "temporal/ssh-config",
+                  "temporal/ansible", "temporal/acceptance", "temporal/ssh-cleanup"]
 
 
 def create_workflow():

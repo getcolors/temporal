@@ -24,10 +24,9 @@ digitalocean-region: ams3
 digitalocean-size: c-8
 digitalocean-image: ubuntu-24-04-x64
 digitalocean-backups: true
-digitalocean-ssh-authorized-keys: ~/.ssh/id_ed25519.pub
+digitalocean-ssh-keys: "00000000"
 digitalocean-ssh-sources: [127.0.0.1/32]
 digitalocean-http-sources: [0.0.0.0/0, "::/0"]
-digitalocean-https-sources: [0.0.0.0/0, "::/0"]
 cloudflare-zone: example.com
 cloudflare-proxied: false
 tls-provider: letsencrypt

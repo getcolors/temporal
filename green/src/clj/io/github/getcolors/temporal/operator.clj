@@ -3,11 +3,12 @@
             [clojure.string :as str]
             [green.cli :as green-cli]
             [green.process :as process]
+            [io.github.getcolors.temporal.ssh :as ssh]
             [io.github.getcolors.temporal.validate :as validate]))
 
 (def acceptance-script
   "set -euo pipefail
-host=$1; failures=$2; restart_mode=$3
+host=$1; failures=$2; restart_mode=$3; identity=${4:-}
 api=https://$host
 body=$(mktemp); trap 'rm -f \"$body\"' EXIT
 curl -fsS --retry 20 --retry-delay 3 \"$api/healthz\" | jq -e '.ok == true and .temporal == \"connected\"' >/dev/null
@@ -28,6 +29,7 @@ sleep 3
 ip=$(getent ahostsv4 \"$host\" | awk 'NR==1 {print $1}')
 [ -n \"$ip\" ]
 ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
+if [ -n \"$identity\" ]; then ssh_opts+=(-o IdentitiesOnly=yes -i \"$identity\"); fi
 if [ \"$restart_mode\" = reboot ]; then
   ssh \"${ssh_opts[@]}\" root@\"$ip\" 'nohup sh -c \"sleep 2; systemctl reboot\" >/dev/null 2>&1 &' || true
 else
@@ -62,7 +64,11 @@ printf 'acceptance: HTTPS, completion, retry, duplicate rejection, %s persistenc
          (let [{:keys [exit err]}
                (runner ["bash" "-c" acceptance-script "--"
                         (str (:reference-application-host opts))
-                        (str (:reference-activity-failures opts)) mode])]
+                        (str (:reference-activity-failures opts)) mode
+                        ;; In keygen mode the deployment's own key is the
+                        ;; machine's only access key (SSH Keypair Standard
+                        ;; §7); nothing guarantees an agent holds it.
+                        (if (validate/keygen? opts) (ssh/private-key-path opts) "")])]
            (cond-> {:green/exit (if (zero? exit) 0 (max 1 exit))}
              (and (not (zero? exit)) err) (assoc :green/err err)))))
      (catch Throwable t {:green/exit 2 :green/err (or (ex-message t) (str t))}))))

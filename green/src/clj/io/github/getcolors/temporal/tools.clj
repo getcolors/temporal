@@ -1,19 +1,21 @@
 (ns io.github.getcolors.temporal.tools
   (:require [cheshire.core :as json]
             [clojure.string :as str]
-            [clojure.walk :as walk]
             [green.ansible :as ansible]
             [green.cli :as green-cli]
             [green.process :as process]
             [green.scaffold :as sc]
             [green.tofu :as tofu]
             [green.workflow :as wf]
+            [io.github.getcolors.once.compute :as compute]
+            [io.github.getcolors.temporal.ssh-config :as ssh-config]
             [io.github.getcolors.temporal.utils :as utils]
             [io.github.getcolors.temporal.validate :as validate]))
 
 (def infrastructure-tool "temporal-infrastructure")
 (def dns-tool "temporal-dns")
 (def ansible-tool "temporal-ansible")
+(def ansible-local-tool "temporal-ansible-local")
 (def root "io.github.getcolors.temporal.tools")
 (def template-opts sc/preserve-jinja-delimiters)
 
@@ -23,9 +25,10 @@
 (defn spec [template target data] {:template template :target target :data data :opts template-opts})
 (defn raw-spec [target content] (sc/content-spec target content))
 
-(defn cidrs [opts k]
-  (let [v (get opts k) xs (if (sequential? v) v (str/split (str v) #"[,\s]+"))]
-    (->> xs (map (comp str/trim str)) (remove str/blank?) vec)))
+(def cidrs
+  "The source lists as validate parses them, so the template and the
+  validator can never disagree about what an entry is. ONCE's."
+  validate/cidrs)
 
 (defn credential-env [opts & slots]
   (not-empty
@@ -35,41 +38,64 @@
                            (conj (vec slots) :provider-backend))))))
 (defn backend-credential-env [opts] (credential-env opts))
 
-(defn ssh-fingerprint [path]
-  (let [path (str/replace (str path) "~/" (str (System/getProperty "user.home") "/"))
-        result (process/run ["ssh-keygen" "-E" "md5" "-lf" path])]
-    (if (zero? (:exit result))
-      (or (some-> (second (re-find #"(MD5:[0-9a-f:]+)" (:out result)))
-                  (str/replace "MD5:" ""))
-          "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00")
-      "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00")))
+(def fallback-params
+  "What `build` and `--dry-run` render in place of a compute output: the
+  documentation address, shaped like the selected provider's real `params` so
+  every later stage sees the same keys either way. ONCE's."
+  compute/fallback-params)
 
-(defn fallback-params [opts]
-  {:ip "192.0.2.10" :user "root" :sudoer "root" :name (:profile opts)})
+(def resolved-compute
+  "Refuse to hand 192.0.2.10 to Ansible on a real converge whose compute
+  output carries no `ip`. ONCE's; `infrastructure-step` is what wires it."
+  compute/resolved-compute)
 
-(defn infrastructure-data [opts]
+(def output-params
+  "The compute stage's `params` output, keywordized and otherwise untouched.
+  ONCE's."
+  compute/output-params)
+
+(def compute-key
+  "`:<provider>-<suffix>`, the selected provider's key. ONCE's, via validate."
+  validate/compute-key)
+
+(def compute-name
+  "The machine's name: `digitalocean-name` when present, else the profile.
+  ONCE's, via validate; the Droplet, the firewall and `params.name` derive
+  every label from it."
+  validate/compute-name)
+
+(defn infrastructure-data
+  "Template values for the compute stage. The name, the keypair mode and the
+  source lists are resolved here once, so the template interpolates values and
+  never branches on which provider it belongs to. An empty
+  `digitalocean-http-sources` (allowed by the standard, meaning no public
+  HTTP) reaches the template as `[]`, whose dynamic 80/443 block then emits
+  no rule: DigitalOcean rejects a rule with no source as an API error rather
+  than a closed port."
+  [opts]
   (assoc opts
-         :digitalocean-ssh-key-fingerprint
-         (if (= :build (:green/event opts))
-           "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
-           (ssh-fingerprint (:digitalocean-ssh-authorized-keys opts)))
-         :ssh-sources-hcl (tofu/hcl-list (cidrs opts :digitalocean-ssh-sources))
-         :http-sources-hcl (tofu/hcl-list (cidrs opts :digitalocean-http-sources))
-         :https-sources-hcl (tofu/hcl-list (cidrs opts :digitalocean-https-sources))))
+         :ssh-keygen (validate/keygen? opts)
+         :compute-name (compute-name opts)
+         :ssh-sources-hcl (tofu/hcl-list (cidrs opts (compute-key opts "ssh-sources")))
+         :http-sources-hcl (tofu/hcl-list (cidrs opts (compute-key opts "http-sources")))))
 
-(defn output-params [result]
-  (some-> (get-in result [:tofu/outputs :params]) walk/keywordize-keys))
+(defn infrastructure-specs
+  "Providers are selected by template directory, not by conditionals inside
+  one file (Compute Provider Standard §3)."
+  [opts]
+  (let [dir (tool-dir opts infrastructure-tool)]
+    [(spec (template (str "infrastructure." (:provider-compute opts)) "main.tf")
+           (str dir "/main.tf") (infrastructure-data opts))]))
 
 (defn infrastructure-step [opts]
-  (let [dir (tool-dir opts infrastructure-tool) data (infrastructure-data opts)
-        specs [(spec (template "infrastructure" "main.tf") (str dir "/main.tf") data)]
-        result (tofu/tofu-with-spec opts specs
+  (let [dir (tool-dir opts infrastructure-tool)
+        result (tofu/tofu-with-spec opts (infrastructure-specs opts)
                                     {:dir dir :env (credential-env opts :provider-compute)})]
     (cond
       (wf/failed? result) result
       (= :build (:green/event opts)) (merge result (fallback-params opts))
       (= :delete (:green/event opts)) result
-      :else (merge result (fallback-params opts) (output-params result)))))
+      :else (resolved-compute result (fallback-params opts) (output-params result)))))
 
 (defn dns-step [opts]
   (let [dir (tool-dir opts dns-tool)
@@ -77,6 +103,41 @@
     (tofu/tofu-with-spec
      opts [(spec (template "tofu" "dns.tf") (str dir "/main.tf") data)]
      {:dir dir :env (credential-env opts :provider-dns)})))
+
+;; ---------------------------------------------------------- ansible (local)
+
+(defn ansible-local-data
+  "Only what a `build` genuinely knows. The address, the user and the alias are
+  run-time facts and reach the play as extra-vars instead, so the rendered
+  playbook carries no IP and is identical on every workstation (SSH Config
+  Standard §6)."
+  [opts]
+  (assoc opts
+         :ssh-keygen (validate/keygen? opts)
+         :ssh-config-identity-file (ssh-config/identity-file opts)))
+
+(defn ansible-local-specs [opts]
+  (let [dir (tool-dir opts ansible-local-tool) data (ansible-local-data opts)]
+    [(spec (template "ansible-local" "ansible.cfg") (str dir "/ansible.cfg") data)
+     (spec (template "ansible-local" "inventory.ini") (str dir "/inventory.ini") data)
+     (spec (template "ansible-local" "main.yml") (str dir "/main.yml") data)]))
+
+(defn ansible-local-step
+  "Write or remove the `~/.ssh/config` block. The same playbook serves both
+  events; `block_state` is what distinguishes them."
+  [opts]
+  (let [dir (tool-dir opts ansible-local-tool)
+        delete? (= :delete (:green/event opts))]
+    (ansible/ansible-with-spec opts
+      {:dir dir :inventory "inventory.ini"
+       :playbooks {:create "main.yml" :delete "main.yml"}
+       :extra-vars {:host_alias (ssh-config/host-alias opts)
+                    :ip (or (:ip opts) (:ip (fallback-params opts)))
+                    :user (or (:user opts) "root")
+                    :block_state (if delete? "absent" "present")}}
+      (ansible-local-specs opts))))
+
+;; ---------------------------------------------------------------- ansible
 
 (defn inventory [opts]
   (json/generate-string
@@ -86,12 +147,20 @@
                                :ansible_user "root"}}}}}}
    {:pretty true}))
 
+(defn ansible-data
+  "Template values for the converge stage. `ssh-private-key-path` reaches
+  ansible.cfg so convergence uses the deployment's own key in keygen mode,
+  where nothing guarantees an agent holds it. No firewall source reaches the
+  play: the provider firewall is the load-bearing layer and the play manages
+  no ufw (Compute Provider Standard §5)."
+  [opts]
+  (assoc opts
+         :ip (or (:ip opts) "192.0.2.10")
+         :ssh-keygen (validate/keygen? opts)
+         :temporal-services-csv (str/join "," (:temporal-services opts))))
+
 (defn ansible-specs [opts]
-  (let [dir (tool-dir opts ansible-tool)
-        data (assoc opts
-                    :ip (or (:ip opts) "192.0.2.10")
-                    :ssh-source (first (cidrs opts :digitalocean-ssh-sources))
-                    :temporal-services-csv (str/join "," (:temporal-services opts)))]
+  (let [dir (tool-dir opts ansible-tool) data (ansible-data opts)]
     [(spec (template "ansible" "ansible.cfg") (str dir "/ansible.cfg") data)
      (spec (template "ansible" "main.yml") (str dir "/main.yml") data)
      (spec (template "ansible" "cleanup.yml") (str dir "/cleanup.yml") data)

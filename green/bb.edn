@@ -3,11 +3,15 @@
  :tasks
  {test {:requires ([clojure.test :as t]
                    [io.github.getcolors.temporal.validate-test]
+                   [io.github.getcolors.temporal.ssh-test]
+                   [io.github.getcolors.temporal.ssh-config-test]
                    [io.github.getcolors.temporal.tools-test]
                    [io.github.getcolors.temporal.workflow-test]
                    [io.github.getcolors.temporal.operator-test])
         :task (let [{:keys [fail error]}
                     (t/run-tests 'io.github.getcolors.temporal.validate-test
+                                 'io.github.getcolors.temporal.ssh-test
+                                 'io.github.getcolors.temporal.ssh-config-test
                                  'io.github.getcolors.temporal.tools-test
                                  'io.github.getcolors.temporal.workflow-test
                                  'io.github.getcolors.temporal.operator-test)]

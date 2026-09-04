@@ -11,10 +11,10 @@ from pathlib import Path
 from blue.cli import load_yaml, read_pars
 from blue.process import run_inherit
 
-from . import validate
+from . import ssh, validate
 
 ACCEPTANCE_SCRIPT = """set -euo pipefail
-host=$1; failures=$2; restart_mode=$3
+host=$1; failures=$2; restart_mode=$3; identity=${4:-}
 api=https://$host
 body=$(mktemp); trap 'rm -f "$body"' EXIT
 curl -fsS --retry 20 --retry-delay 3 "$api/healthz" | jq -e '.ok == true and .temporal == "connected"' >/dev/null
@@ -35,6 +35,7 @@ sleep 3
 ip=$(getent ahostsv4 "$host" | awk 'NR==1 {print $1}')
 [ -n "$ip" ]
 ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
+if [ -n "$identity" ]; then ssh_opts+=(-o IdentitiesOnly=yes -i "$identity"); fi
 if [ "$restart_mode" = reboot ]; then
   ssh "${ssh_opts[@]}" root@"$ip" 'nohup sh -c "sleep 2; systemctl reboot" >/dev/null 2>&1 &' || true
 else
@@ -67,7 +68,11 @@ def run(state_file: str, args: list[str], runner=None, env: dict | None = None) 
             return {"blue/exit": 2, "blue/err": "Usage: blue acceptance [--reboot]"}
         result = runner(["bash", "-c", ACCEPTANCE_SCRIPT, "--",
                          str(opts.get("reference-application-host")),
-                         str(opts.get("reference-activity-failures")), mode])
+                         str(opts.get("reference-activity-failures")), mode,
+                         # In keygen mode the deployment's own key is the
+                         # machine's only access key (SSH Keypair Standard
+                         # §7); nothing guarantees an agent holds it.
+                         ssh.private_key_path(opts) if validate.keygen(opts) else ""])
         outcome = {"blue/exit": 0 if result.exit == 0 else max(1, result.exit)}
         if result.exit != 0 and result.err:
             outcome["blue/err"] = result.err

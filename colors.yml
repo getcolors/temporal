@@ -19,15 +19,21 @@ reference-workflow-delay-seconds: 120
 reference-activity-failures: 2
 reference-activity-maximum-attempts: 5
 reference-duplicate-policy: reject
-digitalocean-name: temporal-example
+# The Droplet is named after the profile; set `digitalocean-name` only for an
+# account whose naming policy the profile cannot satisfy.
+# ams3 is the region this package was verified in; any region that holds an
+# account default VPC works, and the registry requires only that one is set.
 digitalocean-region: ams3
 digitalocean-size: c-8
 digitalocean-image: ubuntu-24-04-x64
 digitalocean-backups: true
-digitalocean-ssh-authorized-keys: ~/.ssh/id_ed25519.pub
+# No `digitalocean-ssh-keys`: the package generates and owns the machine
+# keypair at ~/.ssh/<profile> and registers it as an account key named after
+# the profile (keygen mode). Set it to an existing account key id to opt out.
+# The provider firewall admits TCP 22 from ssh-sources and TCP 80 and 443
+# from http-sources, and nothing else; there is no separate https list.
 digitalocean-ssh-sources: [127.0.0.1/32]
 digitalocean-http-sources: [0.0.0.0/0, "::/0"]
-digitalocean-https-sources: [0.0.0.0/0, "::/0"]
 cloudflare-zone: temporal.example.com
 cloudflare-proxied: false
 tls-provider: letsencrypt

@@ -30,9 +30,9 @@ chmod +x green
 
   <h2>Architecture</h2>
   <div class="grid">
-    <div class="card"><h3>Infrastructure</h3><p>OpenTofu discovers the configured region’s default VPC, provisions one guarded Ubuntu Droplet and firewall, and creates the Cloudflare apex record. Desired state contains no VPC identifier.</p></div>
+    <div class="card"><h3>Infrastructure</h3><p>OpenTofu discovers the configured region’s default VPC, provisions one guarded Ubuntu Droplet and its firewall on DigitalOcean — the one compute provider this package advertises — and creates the Cloudflare apex record. Desired state contains no VPC identifier. The package generates and owns the machine’s SSH keypair and writes a <code>Host &lt;profile&gt;</code> block into <code>~/.ssh/config</code>, so <code>ssh &lt;profile&gt;</code> just works.</p></div>
     <div class="card"><h3>Temporal</h3><p>Docker Compose runs PostgreSQL, schema setup, all four Temporal Server roles, private admin tools, the reference application, and Caddy. It never invokes Temporal’s development server.</p></div>
-    <div class="card"><h3>Network</h3><p>Cloud and host firewalls admit restricted SSH plus HTTP and HTTPS. PostgreSQL, Temporal frontend and internode traffic, admin tools, and the worker stay inside the Docker network.</p></div>
+    <div class="card"><h3>Network</h3><p>The DigitalOcean firewall admits SSH from <code>digitalocean-ssh-sources</code> and HTTP and HTTPS from <code>digitalocean-http-sources</code>, and nothing else; it is the only firewall, because Docker’s published ports bypass a guest <code>ufw</code>. PostgreSQL, Temporal frontend and internode traffic, admin tools, and the worker stay inside the Docker network.</p></div>
     <div class="card"><h3>Persistence</h3><p>PostgreSQL data lives under <code>/data/postgresql</code>. Containers restart after service, Docker, or Droplet restarts; logical dumps and DigitalOcean backups provide recovery options.</p></div>
   </div>
   <p>Temporal Server <strong>1.31.2</strong> and TypeScript SDK <strong>1.22.0</strong> are pinned exactly from the stable releases discovered on 2026-08-15.</p>
@@ -55,9 +55,9 @@ chmod +x green
   </ul>
 
   <h2>Operations</h2>
-  <pre><code>ssh SERVER 'cd /opt/temporal &amp;&amp; docker compose ps'
-ssh SERVER 'cd /opt/temporal &amp;&amp; docker compose logs --since 1h temporal'
-ssh SERVER 'cd /opt/temporal &amp;&amp; docker compose logs --since 1h application'</code></pre>
+  <pre><code>ssh PROFILE 'cd /opt/temporal &amp;&amp; docker compose ps'
+ssh PROFILE 'cd /opt/temporal &amp;&amp; docker compose logs --since 1h temporal'
+ssh PROFILE 'cd /opt/temporal &amp;&amp; docker compose logs --since 1h application'</code></pre>
   <p>Inspect the private stack over SSH rather than publishing admin ports. Re-running <code>create</code> converges the existing deployment and preserves PostgreSQL state.</p>
 
   <h2>Backups, restoration, and upgrades</h2>
