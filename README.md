@@ -1,15 +1,35 @@
 # temporal
 
-A tri-colour Package Skill (green, red, blue) for a production-oriented,
-single-machine Temporal deployment on DigitalOcean, the one compute provider
-it advertises. It discovers the configured region's existing default VPC,
-provisions one guarded Droplet and the provider firewall in front of it,
-generates and owns the machine's SSH keypair (`~/.ssh/<profile>`) and a
-`Host <profile>` block in `~/.ssh/config`, creates apex Cloudflare DNS, and
-converges PostgreSQL, all four Temporal Server roles, a TypeScript worker/API,
-and Caddy. The provider firewall is the only firewall: it admits SSH from
-`digitalocean-ssh-sources` and HTTP/HTTPS from `digitalocean-http-sources`
-and nothing else, and the converge play installs no `ufw`.
+A tri-colour Package Skill (green, red, blue) for one production-oriented
+Temporal stack. The shared colors-compute library owns its VM, provider
+firewall, remote S3/R2 state and machine keys. The package owns apex Cloudflare
+DNS, application Ansible, PostgreSQL, all four Temporal Server roles, a
+TypeScript worker/API and Caddy. Only SSH and HTTP(S) are publicly admitted;
+the converge play installs no `ufw`.
+
+## Compute ownership
+
+The pinned `colors-compute` library owns provider selection, remote S3/R2
+state, deployment coordination, machine keys, network policy and the single
+node. This package supplies singleton topology and SSH/HTTP ingress, then
+uses the returned address, login user and SSH identity for its application
+steps. New provider support belongs in the library; consumers update its pin.
+The application needs a supported Ubuntu image and sufficient memory for
+Temporal and the reference application. Build first to check adapter capabilities.
+
+Use `temporal-ssh-sources` and `temporal-http-sources` for neutral CIDR
+allowlists. Existing selected-provider source options remain compatible.
+External account key references require `ssh-private-key-path`; external
+private keys are never generated or removed. The local SSH block writes
+`IdentityFile` only for a managed deployment key.
+
+Existing `<profile>/temporal-infrastructure.tfstate` is refused before
+compute mutation. Do not remove it to bypass this check: migrate ownership
+explicitly or destroy the old deployment through its original version first.
+Unreadable state and provider mismatches fail closed.
+
+The default adapter remains `digitalocean`. The node requests TCP22/80/443;
+Temporal and PostgreSQL ports remain private to Compose.
 
 Temporal Server is pinned to 1.31.2, the latest stable release discovered from
 the [official release feed](https://github.com/temporalio/temporal/releases/tag/v1.31.2)

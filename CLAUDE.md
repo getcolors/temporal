@@ -3,12 +3,9 @@
 ## Repository
 
 `temporal` is a tri-colour Package Skill (green, red, blue) for one
-production-oriented Temporal stack on a DigitalOcean Droplet. It owns
-DigitalOcean compute and the provider firewall, discovers rather than creates
-the regional default VPC, generates and owns the machine's SSH keypair and a
-`~/.ssh/config` block, owns apex Cloudflare DNS, and converges PostgreSQL,
-Temporal Server, the reference TypeScript API/worker, and Caddy. The first
-consumer is `../temporal-digitalocean`.
+production-oriented Temporal stack on a library-owned VM. The package owns
+Cloudflare DNS, local SSH configuration and application convergence. The library
+owns provider resources, remote state and machine key lifecycle.
 
 Temporal Server 1.31.2 and TypeScript SDK 1.22.0 were discovered as latest
 stable official releases on 2026-08-15. The stack invokes Temporal Server's four
@@ -21,17 +18,10 @@ firewall alone.
 The three implementations live in the tri-colour layout, matching `netbird`:
 canonical Clojure in `green/` (`green/bb.edn`, `green/deps.edn`, `green/src/`,
 `green/tasks/`, tests under `green/test/clj`), TypeScript/Bun in `red/`, and
-Python/uv in `blue/`. Each colour has six namespaces: `validate` (the
-registry, the spec and the package's own checks), `ssh` (the keypair, wrapping
-ONCE's), `ssh-config` (the `~/.ssh/config` block's alias, markers and the two
-local refusals — this package's own, not ONCE's), `tools` (the stages),
-`workflow` (the graph and `start-step`) and `operator` (the `acceptance`
-verb); red also carries `once.ts`, the path-resolution shim for ONCE's
-unexported `ssh.ts`. The templates live under
-`tools/infrastructure/<provider>/` (one directory, `digitalocean`),
-`tools/tofu/` (DNS), `tools/ansible/` (the converge) and
-`tools/ansible-local/` (the three-file local stage that writes the
-`~/.ssh/config` block). Green is canonical: a behavioural change lands in all
+Python/uv in `blue/`. Each color contains application validation, a thin
+compute consumer, identity formatting, local SSH guards, tools, the workflow
+and a separate acceptance operator. Templates contain application resources,
+DNS and the local SSH updater only. Green is canonical: a behavioural change lands in all
 three colours in the same commit and passes `scripts/parity.sh`, which renders
 both fixtures through every colour and diffs the trees — and the colour
 template trees (`red/resources`, blue's embedded `resources/`) — byte for
@@ -64,178 +54,120 @@ create/delete without authorization. Build and dry-run are credential-free.
 ## Invariants
 
 `colors.yml` is flat, non-secret desired state. Validation accumulates errors
-and rejects every configurable VPC identifier: the OpenTofu data source looks up
-the existing default VPC by `digitalocean-region`. The reference application
+and delegates provider inputs to colors-compute. The reference application
 rejects duplicate workflow IDs, durably delays, fails its activity for a fixed
 positive number of attempts, and returns `TEMPORAL:<workflow-id>:OK` with the
 successful attempt number. `acceptance --reboot` is the complete external
 persistence test — every colour carries the identical embedded bash script,
 which passes the generated key to `ssh` in keygen mode.
 
-## The Compute Provider Standard, and what is delegated
+## Shared compute ownership
 
-The package conforms to the workspace Compute Provider Standard
-(`../workspace/standards/compute-provider.md`) by **delegation**: the
-operations — the `:provider-compute must be one of` refusal, the required
-keys, secrets and OpenTofu environment of the selected entry, the CIDR
-grammar and the source rules, the per-provider checks (name rules and
-DigitalOcean's refusal of `vpc-uuid` and `vpc-cidr`), the provider-switch and
-legacy-state refusals, the one up-front state read, `fallback-params`,
-`resolved-compute` and `adopt-state` — live in ONCE's `compute` namespace,
-called with `validate/spec`. What stays here is the data and the wiring: the
-one-entry registry (`digitalocean`, requiring region, size, image, backups
-and the two source lists — what the template interpolates, and nothing the
-sibling standards make optional), the default provider, the `:sources` map
-(`ssh-sources` non-empty, `http-sources` may be empty), the template,
-`state-output`, `start-step`, and the graph. Two package-local checks sit
-beside ONCE's: `digitalocean-vpc-id` and `digitalocean-vpc-name` are refused
-too, and `digitalocean-backups` must be a boolean. The three-colour matrix of
-the delegated operations is tested in ONCE; this package's tests keep one
-wiring test per safety boundary and one spec-content test per colour.
+All three colors depend on `colors-compute`, currently pinned to `e6318347528738267826295a2e60871263d975f2`.
+Read `../workspace/standards/compute-provider.md`, `compute-name.md` and
+`compute-cluster.md` before changing this boundary. This package owns only
+application requirements and singleton topology: role null, count 1. Its
+`compute` module delegates to library `plan_deployment`, `orchestrate` and
+`read_deployment`; do not add a provider registry, provider dispatch, compute
+OpenTofu templates, backend implementation, state writer or key lifecycle here.
+A newly supported provider requires only a library dependency update in consumers.
+The default remains `digitalocean`; provider capabilities and option validation
+are defined by the library. Neutral `temporal-ssh-sources` and
+`temporal-http-sources` are accepted alongside the selected adapter's legacy keys.
 
-**The default provider is DigitalOcean**, which is what a legacy state —
-`params` without `provider` — is taken to be. Every deployment this package
-ever made ran there, so `temporal-digitalocean`'s R2 state, which may hold
-such a `params`, passes the legacy rule on DigitalOcean and would be refused
-on any other provider.
+Build writes library documents under `compute/shared` and `compute/nodes/0`.
+Each stage receives the library `backend_plan` configuration. Remote state keys
+are `<profile>/compute/shared.tfstate` and `<profile>/compute/nodes/0.tfstate`;
+S3 uses ambient AWS credentials, R2 binds its explicit backend credentials in
+private configuration. The deployment journal serializes mutations. Compute
+credential checks occur inside the library after ownership/state inspection.
+DNS remains an application stage with its separate `<profile>/temporal-dns.tfstate`.
 
-**`COLORS_PAR_IP` no longer skips the state read.** It survives as a local
-wrapper around `compute/adopt-state`, in posthog's shape: it replaces the
-recorded address only after a successful read. An unreadable backend fails a
-real delete closed with ONCE's wording whether or not it is set, because §4
-says it must; the old message that offered `COLORS_PAR_IP` as a way round the
-read is gone with the behaviour.
+The library refuses existing `<profile>/temporal-infrastructure.tfstate` before
+mutation. That old monolithic state needs explicit ownership migration or
+teardown using the original package version. Never delete a state object to
+bypass this refusal. Unreadable state, identity mismatches, ambiguous resource
+ownership and live results without an address fail closed. Build-only planned
+addresses must never become fallback targets for create/delete.
 
-**The hardcoded `ams3` check is gone.** The registry requires that a region
-is set; `colors.yml` recommends `ams3` as the region this package was
-verified in.
+The joined node supplies the address, login user, provider identity and SSH
+identity for downstream application steps. Do not assume the user is root.
+No private network is requested by default. Explicit network references and
+adapter capabilities are library concerns. The ingress policy is TCP22/80/443;
+empty HTTP sources close HTTP ingress.
 
-**`ufw` is gone from the converge play, deliberately.** Standard §5 forbids a
-play managing the guest firewall for 22/80/443 and says why: Docker's
-published ports bypass ufw through the `DOCKER` chain, so the guest firewall
-never protected the published stack and the provider firewall is the only
-layer that counts. The old task also opened 22 to the *first*
-`digitalocean-ssh-sources` CIDR alone. `scripts/golden.sh` fails if `ufw`
-reappears in the rendered play.
+A cleanup IP override applies only after successful owned-state inspection.
 
-## The machine keypair and the two retired keys
+## SSH lifecycle and local configuration
 
-The package adopts keygen mode of the SSH Keypair Standard:
-`digitalocean-ssh-keys` and `digitalocean-name` are optional, absence of the
-key means the deployment generates and owns `~/.ssh/<profile>` (ONCE's `ssh`,
-wrapped by `temporal.ssh` with a build-time placeholder home), the compute
-template carries the `<% if ssh-keygen %>` branches whose opt-out side
-contributes no byte, `ansible.cfg` names the private key in keygen mode, the
-`acceptance` verb passes it to `ssh`, and the delete graph removes the key
-strictly **after** the compute destroy (`:temporal/ssh-cleanup`).
+Read `../workspace/standards/ssh-keypair.md` and `ssh-config.md` before edits.
+The library owns key mode, registration preflight, journaled generation,
+fingerprint checks and cleanup. Managed keys live at `~/.ssh/<profile>` and
+are removed only after owned compute resources are destroyed. External provider
+key references require `ssh-private-key-path`; external key material is never
+generated, rotated or deleted. There is no package `ssh-cleanup` step.
 
-The pre-standard key model — `digitalocean-ssh-authorized-keys: <path>`,
-fingerprinted by shelling out to `ssh-keygen -E md5 -lf` on real events and
-looked up with `data "digitalocean_ssh_keys"` — is gone, data source and
-shell-out both. The key is now `digitalocean-ssh-keys`: a literal account key
-id is opt-out, absence is keygen. `digitalocean-ssh-authorized-keys` and
-`digitalocean-https-sources` (443 now follows `http-sources`) are **retired:
-accepted and ignored**, named as such in every `references/configuration.md`.
-The consequence for `../temporal-digitalocean` is worth saying plainly: its
-`colors.yml` carries the retired key and no `digitalocean-ssh-keys`, so on
-the day its payload is refreshed it is in keygen mode; keep it there, or set
-`digitalocean-ssh-keys` to the account key's id first.
+The package SSH helper only formats identities and deterministic build paths.
+Build/dry-run use `/home/build-placeholder/.ssh/<profile>` and never inspect
+operator key files or `~/.ssh/config`. Application Ansible uses the returned
+login and explicit identity for both managed and external keys.
 
-## The `~/.ssh/config` block
+The package-owned `ansible-local/main.yml` contains the workspace locked,
+atomic SSH-config updater. Keep its Python implementation identical across
+colors. Runtime alias, address, user and removal mode arrive as Ansible
+extra-vars, never rendered machine addresses. The managed block uses the profile
+alias and includes `IdentityFile`/`IdentitiesOnly` only in managed mode. The
+updater refuses conflicting unmanaged stanzas and leading global options.
+Create updates the block after compute and before DNS/convergence; delete
+removes it before compute destruction. Never replace this with `blockinfile`
+or move key cleanup ahead of resource destruction.
 
-The package conforms to the workspace SSH Config Standard
-(`../workspace/standards/ssh-config.md`) by copying its reference
-implementation as `rybbit` did, and it was born conforming: the marker is
-`# BEGIN <profile> ANSIBLE MANAGED BLOCK` with no package prefix, so
-`owned-markers` is a one-element set and no migration window exists. The
-`temporal-ansible-local` stage is one `blockinfile` task against
-`~/.ssh/config`, run on `localhost` with `connection: local`, giving the
-operator `ssh <profile>` instead of an address, a user and an identity file.
+## Build and migration checks
 
-The play is **this package's own copy**, deliberately not shared with ONCE's
-(standard §7): the file is shared with every host the operator reaches, so an
-unrelated upstream change must not be able to rewrite it at pin-bump time.
-`../workspace/scripts/package-copies.py` is the net that keeps every
-package's copy in step; run it after touching `ssh_config`, the local play or
-the red `once.ts` shim.
+The two shared fixtures exercise managed/external keys on DigitalOcean;
+they are regression examples, not a package provider allowlist. Run native
+Blue/Red/Green tests, Red typecheck, `scripts/parity.sh`, `scripts/golden.sh`
+and `scripts/launcher.sh`. Golden acceptance requires reviewing the generated
+application changes first. `scripts/check-compute-plan.py` checks singleton
+stages, exact backend keys, absence of inline backend secrets and absence of
+the old compute stage. Run the root example build with its workdir directed
+to a temporary directory; it is separate from fixture coverage.
 
-Address, user, alias and `block_state` arrive as **Ansible extra-vars, never
-through Selmer**, which keeps `build` byte-identical across workstations and
-addresses out of the goldens; the one Selmer conditional is the
-`IdentityFile`/`IdentitiesOnly` pair, rendered in keygen mode only.
+After dependency changes, build actual copied standalone payloads with no
+`*_LIB_ROOT` overrides. Local tests alone do not prove their dependency pins.
+Keep unrelated untracked compute-matrix artifacts out of migration commits.
+Do not claim live deployment verification from an offline build.
 
-Create writes the block after compute and before DNS and convergence
-(`:temporal/infrastructure → :temporal/ssh-config → :temporal/dns`). Delete
-removes it *before* the destroy, the reverse of the keypair: a block that
-outlives its host is stale but harmless, while a key removed early locks you
-out of a machine that still exists. The two orders disagree on purpose.
+## Dependency pins and launchers
 
-The block is inserted with `insertbefore: BOF`. Two local checks run on a real
-create only, never on `build` or `--dry-run`: a `Host <profile>` stanza
-outside this package's markers is an error naming the file and the line,
-never overwritten; an option above the first `Host` or `Match` line is an
-error too, because a BOF insert would capture that global option into one
-stanza. Both messages name the recovery. A hand-written `Host
-temporal-digitalocean` stanza in the operator's `~/.ssh/config` therefore
-makes a real create refuse **by design**; that is the standard working, not
-a bug to work around.
+Keep colors-compute's revision aligned in all three manifests/locks, the root
+Red manifest, Blue PEP723 payload metadata and `green/tasks/pin.clj`. ONCE is
+still pinned at `38e3cd66674a32fb96605e1b17ae6791086ad5c1` for application DNS
+backend credential mapping and utility helpers; it no longer owns compute or
+machine keys for this package. S3 credentials stay ambient. Preserve the DNS
+R2 credential mapping when changing ONCE helpers.
 
-## The two-fixture golden and parity axis
+Use `TEMPORAL_LIB_ROOT` for repository development. Canonical `bb pin` in
+`green/` stamps the three launchers only after the source commit is pushed.
+Use a clean temporary worktree if unrelated untracked files prevent pinning;
+never fabricate a SHA or include those files merely to satisfy the guard.
+Then test the copied payloads, commit and push the stamps. Deployment
+launchers are copies, not symlinks. Avoid duplicate transitive Git package
+entries in Red's standalone PINS: Bun can fail before package loading.
 
-The SSH Keypair Standard has two modes, so there are two fixtures under
-`test/fixtures/`: `colors.yml` (opt-out, profile `temporal-fixture`, an
-explicit `digitalocean-ssh-keys` and a name equal to the profile) and
-`keygen.yml` (`temporal-keygen-fixture`, neither key). One committed golden
-tree per profile lives under `test/resources/golden/local/`. **The opt-out
-golden is the shape a temporal deployment's state holds.** Adopting the
-standards changed it by exactly five things and nothing else: (a) the `ufw`
-package and the host-firewall task left the converge play; (b) the
-`data "digitalocean_ssh_keys"` fingerprint lookup left and `ssh_keys` became
-the literal id; (c) nothing by itself — the 443 rule reads `http-sources`
-now, and the fixture's two lists were equal; (d) `params` gained
-`provider = "digitalocean"`; (e) the 80 and 443 TCP rules became one
-`dynamic "inbound_rule"` block guarded on a non-empty
-`digitalocean-http-sources`, rybbit's shape, so an empty list means no public
-HTTP rather than a DigitalOcean API error — no live droplet existed to move,
-and the block opens the same two TCP ports as before (no UDP 443, which this
-firewall never admitted). Every resource address, the
-`-firewall` suffix, `backups = <{ digitalocean-backups }>` and the `region =`
-form of the VPC lookup are untouched, and `temporal-ansible-local/` was added
-beside the existing stages. `scripts/golden.sh` checks green against both
-trees and asserts the keypair standard on each (a keygen tree declares the
-profile-named key resource and references it by attribute; an opt-out tree
-creates none and keeps the literal id; no rendered tree names `$HOME/.ssh`),
-the config standard's §6 (no dotted quad under `temporal-ansible-local`), and
-that no `ufw` appears in the rendered converge play. `scripts/parity.sh`
-renders both through every colour.
+## Acceptance and retired options
 
-## Coupling
+The separate `acceptance` operator reads owned compute state before any HTTP
+or SSH execution. It requires a live node and uses returned IP/login/identity;
+never resolve public proxied DNS to obtain an SSH target. Non-root users use
+sudo. The embedded shell script must remain byte-identical across colors and
+must preserve completion, retry, duplicate rejection and persistence checks.
 
-The package pins Green and ONCE in `green/deps.edn`, the Red SDK and
-`package-once-red` in `red/package.json`, and the Blue SDK and
-`package-once-blue` in `blue/pyproject.toml`. All three colours pin ONCE at the
-**same rev** (`38e3cd6`) — ONCE's own parity is what guarantees its colours
-agree per commit. The green pin (`3f33f5d`) is a floor coupled to that ONCE
-rev: ONCE 38e3cd6 trusts the SDK's step error alone when it reads state, and
-green 3f33f5d is where the SDK reports a tofu launch failure (a missing stage
-directory or binary) as that step error, the way red and blue always did; an
-older green under this ONCE would crash a fresh-clone create instead of
-reporting its credentials, so the two pins move together. ONCE supplies the
-backend provider registry, the `compute` namespace (the Compute Provider
-Standard's operations over this package's own registry) and the `ssh`
-namespace (the SSH Keypair Standard); the DNS credential map is this package's
-own. The red launcher's `PINS`, the blue launcher's PEP 723 block and
-`green/tasks/pin.clj` carry the same ONCE rev. `blue/pyproject.toml` carries a
-`[tool.uv] override-dependencies` block, now redundant because
-`package-once-blue` at `38e3cd6` pins the same Blue rev, and kept because it
-is harmless and would make this package's Blue pin win were ONCE ever to pin
-an older one again.
-
-Use `TEMPORAL_LIB_ROOT` (the repository root, for every colour; red also
-accepts the `red/` dir directly), `GREEN_LIB_ROOT`, and `ONCE_LIB_ROOT` for
-working-tree development. Final launchers use a pushed SHA managed by `bb pin`
-(in `green/`), which stamps all three payloads from their unpinned birth forms;
-deployment launchers are copies, not symlinks. Never invent or hand-edit a SHA.
+`digitalocean-backups` is interpreted by the library; do not add a provider
+branch or backup resource mapping here. `digitalocean-vpc-id`/`-vpc-name` are
+retired application inputs and always refused. Legacy SSH aliases are validated by the library and conflicting declarations
+refuse. `digitalocean-https-sources` stays ignored. The guest play must not install
+ufw; provider policy owns ingress.
 
 ## Documentation
 

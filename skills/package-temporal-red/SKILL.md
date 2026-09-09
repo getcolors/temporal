@@ -1,6 +1,6 @@
 ---
 name: package-temporal-red
-description: Provision and operate a production-oriented single-machine Temporal deployment on DigitalOcean using Red.
+description: Provision and operate a production-oriented single-machine Temporal deployment through colors-compute using Red.
 ---
 
 # Temporal Package Skill
@@ -18,38 +18,36 @@ Use the bundled `red` launcher against a non-secret `colors.yml`.
 
 Read `references/configuration.md` before editing desired state. Put credentials
 only in ignored `.envrc.private` as `COLORS_PAR_*`. Never export
-`COLORS_PAR_PROFILE`, edit `.colors/`, configure a VPC identifier, weaken
+`COLORS_PAR_PROFILE`, edit `.colors/`, weaken
 `compute-prevent-destroy`, or run a real create/delete without authorization.
 Only the HTTPS reference API is public; PostgreSQL and Temporal ports stay
 private. Use `acceptance --reboot` for the full durable-recovery check.
 
-## Provider
+## Compute ownership
 
-`provider-compute` selects the machine; `digitalocean` (one Droplet, the
-region's default VPC discovered at runtime, a provider firewall in front) is
-the one provider this package advertises.
+The pinned `colors-compute` library owns provider selection, remote S3/R2
+state, deployment coordination, machine keys, network policy and the single
+node. This package supplies singleton topology and SSH/HTTP ingress, then
+uses the returned address, login user and SSH identity for its application
+steps. New provider support belongs in the library; consumers update its pin.
+The application needs a supported Ubuntu image and sufficient memory for
+Temporal and the reference application. Build first to check adapter capabilities.
 
-| Provider | Credential | Keys |
-|---|---|---|
-| `digitalocean` | `COLORS_PAR_DO_TOKEN` | `digitalocean-region`, `digitalocean-size`, `digitalocean-image`, `digitalocean-backups`, `digitalocean-ssh-sources`, `digitalocean-http-sources`; optional `digitalocean-name`, `digitalocean-ssh-keys` |
+Use `temporal-ssh-sources` and `temporal-http-sources` for neutral CIDR
+allowlists. Existing selected-provider source options remain compatible.
+External account key references require `ssh-private-key-path`; external
+private keys are never generated or removed. The local SSH block writes
+`IdentityFile` only for a managed deployment key.
 
-- `digitalocean-name` is optional and defaults to the profile.
-- `digitalocean-ssh-keys` is optional. Leave it out and the package generates
-  and owns the machine keypair at `~/.ssh/<profile>` on the first real create
-  (keygen mode, the default); set it to an existing account key id to use that
-  key instead.
-- A real create also writes a managed `Host <profile>` block into
-  `~/.ssh/config`, between `# BEGIN <profile> ANSIBLE MANAGED BLOCK` and
-  `# END …` markers, so `ssh <profile>` reaches the machine; `delete` removes
-  it before the machine is destroyed. The alias is the profile — there is no
-  separate key for it. A `Host <profile>` stanza that already exists outside
-  those markers, or an option standing above the first `Host` line of the
-  file, refuses the create with the file and line named; the package never
-  overwrites either. Remove or rename the stanza, move the global options
-  below the block or into a `Host *` stanza at the end, or change `profile`.
-- `digitalocean-ssh-sources` must list at least one CIDR; every entry of both
-  source keys must be a valid IPv4 or IPv6 CIDR. An empty
-  `digitalocean-http-sources` means no public HTTP. The provider firewall is
-  the only firewall: the converge play installs no `ufw`.
-- `digitalocean-ssh-authorized-keys` and `digitalocean-https-sources` are
-  retired: accepted, ignored, and documented in the configuration reference.
+Existing `<profile>/temporal-infrastructure.tfstate` is refused before
+compute mutation. Do not remove it to bypass this check: migrate ownership
+explicitly or destroy the old deployment through its original version first.
+Unreadable state and provider mismatches fail closed.
+
+The default adapter remains `digitalocean`. The node requests TCP22/80/443;
+Temporal and PostgreSQL ports remain private to Compose.
+
+The `acceptance` verb reads library-owned compute state before running and
+uses its observed SSH address, login and identity. Missing, destroyed or
+unreadable state refuses execution. `--reboot` performs the full persistence
+check; the public DNS name is only an HTTPS endpoint, never the SSH target.

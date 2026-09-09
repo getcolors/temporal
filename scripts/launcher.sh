@@ -22,7 +22,7 @@ ok 'each colour dir symlinks its skill payload'
 mkdir "$tmp/project"; cp "$launcher" "$tmp/project/green"; chmod +x "$tmp/project/green"
 sed "s#WORKDIR#.colors#" "$root/test/fixtures/colors.yml" > "$tmp/project/colors.yml"
 (cd "$tmp/project" && TEMPORAL_LIB_ROOT="$root" ./green build >/dev/null) || fail 'working-tree override failed'
-[ -f "$tmp/project/.colors/temporal-fixture/temporal-infrastructure/main.tf" ] || fail 'render missing'
+[ -f "$tmp/project/.colors/temporal-fixture/compute/shared/backend.tf.json" ] || fail 'render missing'
 [ -f "$tmp/project/.colors/temporal-fixture/temporal-ansible/application/src/workflows.ts" ] || fail 'application render missing'
 ok 'working-tree override renders from a copied payload'
 mkdir -p "$tmp/project/deep/path"

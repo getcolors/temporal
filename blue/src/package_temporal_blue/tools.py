@@ -14,7 +14,7 @@ from blue.cli import stage_dir
 from blue.runtime import runtime
 from blue.scaffold import PRESERVE_JINJA_DELIMITERS, content_spec, scaffold
 from blue.workflow import StepError, failed
-from package_once_blue import compute as once_compute
+from . import compute
 
 from . import ssh_config, utils, validate
 
@@ -49,9 +49,6 @@ def raw_spec(target: str, content: str) -> dict:
 
 # The source lists as validate parses them, so the template and the
 # validator can never disagree about what an entry is. ONCE's.
-cidrs = validate.cidrs
-
-
 def credential_env(opts: dict, *slots: str) -> dict[str, str] | None:
     mapping: dict[str, str] = {}
     for slot in [*slots, "provider-backend"]:
@@ -69,58 +66,11 @@ def backend_credential_env(opts: dict) -> dict[str, str] | None:
 # What `build` and `--dry-run` render in place of a compute output: the
 # documentation address, shaped like the selected provider's real `params` so
 # every later stage sees the same keys either way. ONCE's.
-fallback_params = once_compute.fallback_params
+def fallback_params(opts):
+    if opts.get('blue/event') in ('create','delete') and not opts.get('blue/dry-run'): raise ValueError('compute node unavailable')
+    return compute.node(compute.planned(opts))
 
-# Refuse to hand 192.0.2.10 to Ansible on a real converge whose compute output
-# carries no `ip`. ONCE's; `infrastructure_step` is what wires it.
-resolved_compute = once_compute.resolved_compute
-
-# The compute stage's `params` output, untouched. ONCE's.
-output_params = once_compute.output_params
-
-# `<provider>-<suffix>`, the selected provider's key. ONCE's, via validate.
-compute_key = validate.compute_key
-
-# The machine's name: `digitalocean-name` when present, else the profile.
-# ONCE's, via validate; the Droplet, the firewall and `params.name` derive
-# every label from it.
-compute_name = validate.compute_name
-
-
-def infrastructure_data(opts: dict) -> dict:
-    """Template values for the compute stage. The name, the keypair mode and
-    the source lists are resolved here once, so the template interpolates
-    values and never branches on which provider it belongs to. An empty
-    `digitalocean-http-sources` (allowed by the standard, meaning no public
-    HTTP) reaches the template as `[]`, whose dynamic 80/443 block then
-    emits no rule: DigitalOcean rejects a rule with no source as an API error
-    rather than a closed port."""
-    return {**opts,
-            "ssh-keygen": validate.keygen(opts),
-            "compute-name": compute_name(opts),
-            "ssh-sources-hcl": tofu.hcl_list(cidrs(opts, compute_key(opts, "ssh-sources"))),
-            "http-sources-hcl": tofu.hcl_list(cidrs(opts, compute_key(opts, "http-sources")))}
-
-
-def infrastructure_specs(opts: dict) -> list[dict]:
-    """Providers are selected by template directory, not by conditionals
-    inside one file (Compute Provider Standard §3)."""
-    dir = tool_dir(opts, infrastructure_tool)
-    return [spec(template(f"infrastructure.{opts.get('provider-compute')}", "main.tf"),
-                 f"{dir}/main.tf", infrastructure_data(opts))]
-
-
-async def infrastructure_step(opts: dict) -> dict:
-    dir = tool_dir(opts, infrastructure_tool)
-    result = await tofu.tofu_with_spec(opts, infrastructure_specs(opts), dir=dir,
-                                       env=credential_env(opts, "provider-compute"))
-    if failed(result):
-        return result
-    if opts.get("blue/event") == "build":
-        return {**result, **fallback_params(opts)}
-    if opts.get("blue/event") == "delete":
-        return result
-    return resolved_compute(result, fallback_params(opts), output_params(result))
+infrastructure_step = compute.infrastructure_step
 
 
 async def dns_step(opts: dict) -> dict:
@@ -188,7 +138,7 @@ def ansible_local_data(opts: dict) -> dict:
     rendered playbook carries no IP and is identical on every workstation (SSH
     Config Standard §6)."""
     return {**opts,
-            "ssh-keygen": validate.keygen(opts),
+            "ssh-keygen": validate.keygen(opts), "ssh-identity-present": bool(opts.get("ssh-private-key-path")),
             "ssh-config-identity-file": ssh_config.identity_file(opts)}
 
 
@@ -221,8 +171,8 @@ def inventory(opts: dict) -> str:
     return _pretty(
         {"all": {"children": {"temporal": {"hosts": {
             utils.host_alias(opts): {
-                "ansible_host": opts.get("ip") or "192.0.2.10",
-                "ansible_user": "root"}}}}}})
+                "ansible_host": opts.get("ip") or fallback_params(opts)["ip"],
+                "ansible_user": opts.get("user") or fallback_params(opts)["user"]}}}}}})
 
 
 def ansible_data(opts: dict) -> dict:
@@ -233,8 +183,8 @@ def ansible_data(opts: dict) -> dict:
     no ufw (Compute Provider Standard §5)."""
     services = opts.get("temporal-services")
     return {**opts,
-            "ip": opts.get("ip") or "192.0.2.10",
-            "ssh-keygen": validate.keygen(opts),
+            "ip": opts.get("ip") or fallback_params(opts)["ip"],
+            "ssh-keygen": validate.keygen(opts), "ssh-identity-present": bool(opts.get("ssh-private-key-path")),
             "temporal-services-csv": ",".join(
                 str(s) for s in (services if isinstance(services, (list, tuple)) else []))}
 
@@ -264,12 +214,8 @@ def ansible_specs(opts: dict) -> list[dict]:
 
 async def ansible_step(opts: dict) -> dict:
     dir = tool_dir(opts, ansible_tool)
-    if opts.get("blue/event") == "delete" and not opts.get("ip"):
-        # No compute in state: there is no host to clean up, and the rendered
-        # inventory would fall back to 192.0.2.10. Remove the rendered tree the
-        # way a completed cleanup would and let the teardown continue.
-        return {**scaffold(opts, ansible_specs(opts)),
-                "blue/exit": 0, "temporal/cleanup": "skipped-no-compute"}
+    if opts.get('blue/event') in ('create','delete') and not opts.get('blue/dry-run') and not opts.get('ip'):
+        return {**opts,'blue/exit':1,'blue/err':'compute node unavailable'}
     return await ansible_with_spec(opts, ansible_specs(opts),
                                    dir=dir, inventory="inventory.json",
                                    playbooks={"create": "main.yml", "delete": "cleanup.yml"},

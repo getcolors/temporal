@@ -1,8 +1,8 @@
 (ns io.github.getcolors.temporal.validate
   (:require [clojure.string :as str]
             [green.cli :as green-cli]
-            [io.github.getcolors.once.compute :as compute]
-            [io.github.getcolors.once.ssh :as once-ssh]
+            [io.github.getcolors.temporal.compute :as compute]
+            [io.github.getcolors.compute-ssh :as compute-ssh]
             [io.github.getcolors.once.validate :as once-validate]
             [io.github.getcolors.temporal.utils :as utils]))
 
@@ -11,45 +11,7 @@
   (when (not-empty (str (get env profile-par)))
     [(str profile-par " is set; profile must come from colors.yml only")]))
 
-(def compute-providers
-  "provider-compute -> what that choice implies (Compute Provider Standard §2).
-
-  `:required` are the non-secret keys that provider's template interpolates,
-  `:secrets` the credentials it needs through COLORS_PAR_*, and `:tofu-env`
-  the subset OpenTofu reads from the process environment itself. Keeping the
-  three together is what stops a provider being validated against one set of
-  keys and run with another. The keys of this map are the advertised
-  providers; a provider without a template directory and a golden is not
-  advertised, and this package advertises one.
-
-  Two keys the template reads are deliberately not required.
-  `digitalocean-name` is an optional override of the profile (Compute Name
-  Standard), and `digitalocean-ssh-keys` is meaningful by its absence (SSH
-  Keypair Standard)."
-  {"digitalocean"
-   {:required [:digitalocean-region :digitalocean-size :digitalocean-image
-               :digitalocean-backups :digitalocean-ssh-sources
-               :digitalocean-http-sources]
-    :secrets [:do-token]
-    :tofu-env {:do-token "DIGITALOCEAN_TOKEN"}}})
-
-(def default-compute-provider
-  "The provider a deployment created before this package recorded one in its
-  compute output must be running. A legacy state -- `params` without
-  `provider` -- is whatever this value says it is; every deployment this
-  package ever made ran on DigitalOcean, so a legacy `temporal-digitalocean`
-  state is accepted there and refused on any other provider."
-  "digitalocean")
-
-(def spec
-  "How this package describes itself to ONCE's `compute`, the Compute Provider
-  Standard's operations over a package-owned registry. The registry and the
-  default are the data above; `:sources` names the firewall lists the
-  template reads -- SSH must list at least one CIDR, an empty HTTP list means
-  no public HTTP. The name rules are ONCE's."
-  {:registry compute-providers
-   :default default-compute-provider
-   :sources {:non-empty ["ssh-sources"] :may-be-empty ["http-sources"]}})
+(def default-compute-provider "digitalocean")
 
 (def required
   "Every key desired state must carry whichever provider is selected. The
@@ -67,36 +29,7 @@
 (def host-re #"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$")
 (def version-re #"^[0-9]+\.[0-9]+\.[0-9]+$")
 
-(def forbidden-vpc-keys
-  "The package-local half of the DigitalOcean VPC refusal. ONCE's
-  `provider-errors` refuses `digitalocean-vpc-uuid` and `digitalocean-vpc-cidr`
-  (Compute Provider Standard §5); this package has always refused the two
-  other spellings a hand-edited colors.yml is likely to carry, and keeps them
-  beside ONCE's."
-  [:digitalocean-vpc-id :digitalocean-vpc-name])
-
-(def compute-key
-  "`:<provider>-<suffix>`: desired state names compute keys after the
-  provider, so the shared steps reach them through the selected provider
-  rather than a fixed prefix. ONCE's; named here so `tools` reads the same."
-  compute/key)
-
-(def compute-name
-  "What this deployment's machine is called: `digitalocean-name` when present,
-  else the profile (Compute Name Standard). ONCE's; the Droplet, the firewall
-  and `params.name` derive every label from this one answer."
-  compute/name)
-
-(defn keygen?
-  "Whether this deployment owns its machine keypair. Delegates to ONCE, the
-  standard's reference implementation, so one rule decides it everywhere."
-  [opts]
-  (once-ssh/keygen? opts))
-
-(def cidrs
-  "A source list as desired state or an overlay string carries it. ONCE's, so
-  the validator and the template can never disagree about what an entry is."
-  compute/cidrs)
+(defn keygen? [opts] (try (= "managed" (:mode (compute-ssh/mode opts))) (catch Exception _ true)))
 
 (defn state-errors
   "Every problem with desired state at once: the missing keys (this package's
@@ -107,18 +40,15 @@
   [opts]
   (vec
    (concat
-    (for [k (concat required (compute/required-keys spec opts))
+    (for [k required
           :when (missing? (get opts k))]
       (str k " is required"))
     (when-not (= "cloudflare" (utils/provider (:provider-dns opts)))
       [":provider-dns must be cloudflare"])
-    (when-not (contains? #{"local" "s3" "r2"} (:provider-backend opts))
-      [":provider-backend must be local, s3, or r2"])
+    (when-not (contains? #{"s3" "r2"} (:provider-backend opts))
+      [":provider-backend must be s3 or r2"])
     (when-not (boolean? (:compute-prevent-destroy opts))
       [":compute-prevent-destroy must be true or false"])
-    (when (and (= "digitalocean" (:provider-compute opts))
-               (not (boolean? (:digitalocean-backups opts))))
-      [":digitalocean-backups must be true or false"])
     (when-not (re-matches version-re (str (:temporal-version opts)))
       [":temporal-version must be an exact x.y.z version"])
     (when-not (re-matches version-re (str (:temporal-typescript-sdk-version opts)))
@@ -137,10 +67,8 @@
       [":reference-application-host must be a fully qualified hostname"])
     (when-not (= (:reference-application-host opts) (:cloudflare-zone opts))
       [":reference-application-host must be the Cloudflare zone apex"])
-    (when (= "digitalocean" (:provider-compute opts))
-      (for [k forbidden-vpc-keys :when (contains? opts k)]
-        (str k " must not be configured; the default regional VPC is discovered at runtime")))
-    (compute/state-errors spec opts))))
+    (for [key [:digitalocean-vpc-id :digitalocean-vpc-name] :when (contains? opts key)] (str "retired option " key " must be removed"))
+    (compute/errors opts))))
 
 (defn backend-secrets [opts]
   (:secrets (get-in once-validate/providers
@@ -150,7 +78,7 @@
   "Credentials a real create or delete needs: the selected compute provider's,
   Cloudflare's, and the backend's."
   [opts]
-  (let [keys (concat (compute/secrets spec opts)
+  (let [keys (concat
                      [:cloudflare-api-token]
                      (backend-secrets opts))]
     (for [k (distinct keys) :when (missing? (get opts k))]
@@ -158,7 +86,7 @@
 
 (defn tofu-env [opts slot]
   (case slot
-    :provider-compute (compute/tofu-env spec opts)
+    :provider-compute {}
     :provider-dns {:cloudflare-api-token "CLOUDFLARE_API_TOKEN"}
     :provider-backend (:tofu-env (get-in once-validate/providers
                                          [:provider-backend (:provider-backend opts)]) {})

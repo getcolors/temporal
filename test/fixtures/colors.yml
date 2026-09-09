@@ -1,8 +1,9 @@
 profile: temporal-fixture
 workdir: WORKDIR
+ssh-private-key-path: /home/build-placeholder/.ssh/operator-key
 provider-compute: digitalocean
 provider-dns: cloudflare
-provider-backend: local
+provider-backend: r2
 compute-prevent-destroy: true
 temporal-version: 1.31.2
 temporal-services: [frontend, history, matching, worker]
@@ -30,3 +31,6 @@ digitalocean-http-sources: [0.0.0.0/0, "::/0"]
 cloudflare-zone: example.com
 cloudflare-proxied: false
 tls-provider: letsencrypt
+
+r2-bucket: tofu-state-example
+r2-endpoint: https://example.eu.r2.cloudflarestorage.com

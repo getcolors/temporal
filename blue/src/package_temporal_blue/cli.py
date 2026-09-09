@@ -42,7 +42,7 @@ async def run(*args):
     if command in LIFECYCLE:
         return await run_cli(temporal_workflow, default_args(args))
     if command == "acceptance":
-        return operator.run(_find(), args[1:])
+        return await operator.run(_find(), args[1:])
     return {"blue/exit": 2, "blue/err": USAGE}
 
 

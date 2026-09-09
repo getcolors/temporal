@@ -3,12 +3,11 @@
             [clojure.string :as str]
             [green.cli :as green-cli]
             [green.process :as process]
-            [io.github.getcolors.temporal.ssh :as ssh]
+            [io.github.getcolors.temporal.compute :as compute]
             [io.github.getcolors.temporal.validate :as validate]))
 
-(def acceptance-script
-  "set -euo pipefail
-host=$1; failures=$2; restart_mode=$3; identity=${4:-}
+(def acceptance-script "set -euo pipefail
+host=$1; failures=$2; restart_mode=$3; identity=${4:-}; ip=${5:?owned IP required}; user=${6:?owned user required}
 api=https://$host
 body=$(mktemp); trap 'rm -f \"$body\"' EXIT
 curl -fsS --retry 20 --retry-delay 3 \"$api/healthz\" | jq -e '.ok == true and .temporal == \"connected\"' >/dev/null
@@ -26,15 +25,15 @@ restart_id=restart-$(date +%s)-$RANDOM
 code=$(curl -sS -o \"$body\" -w '%{http_code}' -H 'content-type: application/json' -d \"{\\\"workflowId\\\":\\\"$restart_id\\\",\\\"delaySeconds\\\":45}\" \"$api/workflows\")
 [ \"$code\" = 202 ]
 sleep 3
-ip=$(getent ahostsv4 \"$host\" | awk 'NR==1 {print $1}')
 [ -n \"$ip\" ]
 ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
 if [ -n \"$identity\" ]; then ssh_opts+=(-o IdentitiesOnly=yes -i \"$identity\"); fi
+command='systemctl restart docker'
 if [ \"$restart_mode\" = reboot ]; then
-  ssh \"${ssh_opts[@]}\" root@\"$ip\" 'nohup sh -c \"sleep 2; systemctl reboot\" >/dev/null 2>&1 &' || true
-else
-  ssh \"${ssh_opts[@]}\" root@\"$ip\" 'systemctl restart docker'
+  command='nohup sh -c \"sleep 2; systemctl reboot\" >/dev/null 2>&1 &'
 fi
+if [ \"$user\" != root ]; then command=\"sudo -n -- sh -c $(printf '%q' \"$command\")\"; fi
+ssh \"${ssh_opts[@]}\" \"$user@$ip\" \"$command\"
 sleep 5
 curl -fsS --retry 120 --retry-delay 5 --retry-all-errors \"$api/healthz\" >/dev/null
 for _ in $(seq 1 120); do
@@ -48,7 +47,8 @@ printf 'acceptance: HTTPS, completion, retry, duplicate rejection, %s persistenc
 
 (defn run
   ([state-file args] (run state-file args inherit-run (System/getenv)))
-  ([state-file args runner env]
+  ([state-file args runner env] (run state-file args runner env compute/load-step))
+  ([state-file args runner env loader]
    (try
      (let [file (io/file state-file)
            opts (-> (green-cli/read-state file (slurp file))
@@ -61,14 +61,12 @@ printf 'acceptance: HTTPS, completion, retry, duplicate rejection, %s persistenc
          (not (contains? #{[] ["--reboot"]} (vec args)))
          {:green/exit 2 :green/err "Usage: green acceptance [--reboot]"}
          :else
-         (let [{:keys [exit err]}
-               (runner ["bash" "-c" acceptance-script "--"
-                        (str (:reference-application-host opts))
-                        (str (:reference-activity-failures opts)) mode
-                        ;; In keygen mode the deployment's own key is the
-                        ;; machine's only access key (SSH Keypair Standard
-                        ;; §7); nothing guarantees an agent holds it.
-                        (if (validate/keygen? opts) (ssh/private-key-path opts) "")])]
-           (cond-> {:green/exit (if (zero? exit) 0 (max 1 exit))}
-             (and (not (zero? exit)) err) (assoc :green/err err)))))
+         (let [owned (loader opts env)]
+           (if (or (not (zero? (or (:green/exit owned) 0))) (:temporal/already-destroyed owned) (not (:ip owned)) (not (:user owned)))
+             {:green/exit 1 :green/err (or (:green/err owned) "compute node unavailable")}
+             (let [{:keys [exit err]} (runner ["bash" "-c" acceptance-script "--"
+                      (str (:reference-application-host opts)) (str (:reference-activity-failures opts)) mode
+                      (str (or (:ssh-private-key-path owned) "")) (str (:ip owned)) (str (:user owned))])]
+               (cond-> {:green/exit (if (zero? exit) 0 (max 1 exit))}
+                 (and (not (zero? exit)) err) (assoc :green/err err)))))))
      (catch Throwable t {:green/exit 2 :green/err (or (ex-message t) (str t))}))))
