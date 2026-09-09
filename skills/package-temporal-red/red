@@ -36,7 +36,7 @@ import { homedir } from "node:os";
 // directory, which would halt Bun's upward resolution of `package-temporal-red`
 // and break the development symlink at red/red.
 const PINS = {
-  "package-temporal-red": "github:getcolors/temporal#d95902f808187c59dcfe879c03d3957c7a32bc69",
+  "package-temporal-red": "github:getcolors/temporal#4509acc461aea3314f0bf7b61361c7d4e7cf279e",
   "package-once-red": "github:getcolors/once#38e3cd66674a32fb96605e1b17ae6791086ad5c1",
 };
 
