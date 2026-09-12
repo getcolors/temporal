@@ -36,7 +36,7 @@ import { homedir } from "node:os";
 // directory, which would halt Bun's upward resolution of `package-temporal-red`
 // and break the development symlink at red/red.
 const PINS = {
-  "package-temporal-red": "github:getcolors/temporal#4509acc461aea3314f0bf7b61361c7d4e7cf279e",
+  "package-temporal-red": "github:getcolors/temporal#69958f9b9bbf88ec6084f04b7689daf44b52d1a8",
   "package-once-red": "github:getcolors/once#38e3cd66674a32fb96605e1b17ae6791086ad5c1",
   // The Red SDK is a peer of colors-compute-red, not a dependency: a cold
   // cache installs nothing for a peer, so the consumer pins it explicitly, at
